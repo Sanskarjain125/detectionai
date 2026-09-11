@@ -86,3 +86,9 @@ The match threshold is configured by `FACE_MATCH_THRESHOLD = 0.50` near the top 
 ## Privacy and limitations
 
 Face recognition is probabilistic. Use it only with the knowledge and permission of the people enrolled, and do not use it as the sole basis for high-impact decisions. Keep `known_faces/` and `details.json` private because they contain biometric and personal information.
+
+## Vercel deployment
+
+The repository includes `vercel.json`, `.python-version`, and `build.py` to prevent Vercel's Python Function from crashing while importing `face_recognition`. Vercel imports `app.py` directly (it does not run `run.py`), so the build hook installs `face-recognition` against the pinned prebuilt dlib runtime.
+
+For privacy, Git intentionally excludes `known_faces/` photos and the real `details.json`. Therefore, the Vercel page can load successfully but has no enrolled face dataset. Keep face recognition on the local server unless you deliberately choose an approved, secure biometric-data store and deployment process.

@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "python build.py",
+  "functions": {
+    "app.py": {
+      "maxDuration": 60,
+      "excludeFiles": "{.venv/**,.python311/**,android_app/**,known_faces/**,**/__pycache__/**,**/*.pyc}"
+    }
+  }
+}
