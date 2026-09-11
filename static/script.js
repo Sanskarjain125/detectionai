@@ -2,15 +2,16 @@
   const video = document.querySelector("#camera");
   const startButton = document.querySelector("#startCamera");
   const scanButton = document.querySelector("#scanFace");
-  const videoUpload = document.querySelector("#videoUpload");
-  const scanVideoButton = document.querySelector("#scanVideo");
-  const selectedVideo = document.querySelector("#selectedVideo");
+  const recordVideoButton = document.querySelector("#recordVideo");
+  const recordingStatus = document.querySelector("#recordingStatus");
   const placeholder = document.querySelector("#cameraPlaceholder");
   const overlay = document.querySelector("#scanOverlay");
   const statusMessage = document.querySelector("#statusMessage");
   const resultCards = document.querySelector("#resultCards");
   const lastScanCard = document.querySelector("#lastScanCard");
   const lastScannedImage = document.querySelector("#lastScannedImage");
+  const lastVideoCard = document.querySelector("#lastVideoCard");
+  const lastCapturedVideo = document.querySelector("#lastCapturedVideo");
 
   const MODEL_URL = "https://justadudewhohacks.github.io/face-api.js/models";
   const profiles = Array.isArray(window.ENROLLED_PROFILES) ? window.ENROLLED_PROFILES : [];
@@ -18,12 +19,16 @@
   let stream = null;
   let matcher = null;
   let isScanning = false;
-  let isVideoScanning = false;
   let scanningPaused = false;
   let scanTimer = null;
-  let uploadedVideoUrl = null;
-  let uploadedVideoName = "";
+  let mediaRecorder = null;
+  let recordingChunks = [];
+  let recordingUrl = null;
+  let recordingStartedAt = 0;
+  const recordingMatchesByPerson = new Map();
   const DETECTION_OPTIONS = new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.35 });
+  const CAMERA_SCAN_INTERVAL = 2500;
+  const RECORDING_SCAN_INTERVAL = 1500;
 
   function setStatus(message, kind = "") {
     statusMessage.textContent = message;
@@ -37,42 +42,34 @@
     lastScannedImage.removeAttribute("src");
   }
 
+  function setRecordingStatus(message = "") {
+    recordingStatus.textContent = message;
+    recordingStatus.hidden = !message;
+  }
+
+  function isRecording() {
+    return mediaRecorder?.state === "recording";
+  }
+
+  function startAutomaticScanning(interval = CAMERA_SCAN_INTERVAL) {
+    if (scanTimer) window.clearInterval(scanTimer);
+    scanTimer = window.setInterval(scanFrame, interval);
+  }
+
   function stopCameraStream() {
+    if (isRecording()) mediaRecorder.stop();
     stream?.getTracks().forEach((track) => track.stop());
     stream = null;
     if (scanTimer) window.clearInterval(scanTimer);
     scanTimer = null;
   }
 
-  function clearUploadedVideo() {
-    if (uploadedVideoUrl) URL.revokeObjectURL(uploadedVideoUrl);
-    uploadedVideoUrl = null;
-    uploadedVideoName = "";
-    selectedVideo.hidden = true;
-    selectedVideo.textContent = "";
-    video.removeAttribute("src");
-    video.controls = false;
-    video.load();
-  }
-
-  function waitForVideoEvent(eventName) {
-    return new Promise((resolve, reject) => {
-      const onEvent = () => { cleanup(); resolve(); };
-      const onError = () => { cleanup(); reject(new Error("The selected video could not be read.")); };
-      const cleanup = () => {
-        video.removeEventListener(eventName, onEvent);
-        video.removeEventListener("error", onError);
-      };
-      video.addEventListener(eventName, onEvent, { once: true });
-      video.addEventListener("error", onError, { once: true });
-    });
-  }
-
-  async function seekVideo(seconds) {
-    if (Math.abs(video.currentTime - seconds) < 0.05) return;
-    const seeked = waitForVideoEvent("seeked");
-    video.currentTime = Math.min(seconds, Math.max(0, video.duration - 0.05));
-    await seeked;
+  function clearRecordedVideo() {
+    if (recordingUrl) URL.revokeObjectURL(recordingUrl);
+    recordingUrl = null;
+    lastCapturedVideo.removeAttribute("src");
+    lastCapturedVideo.load();
+    lastVideoCard.hidden = true;
   }
 
   function formatVideoTime(seconds) {
@@ -111,7 +108,7 @@
       return new faceapi.LabeledFaceDescriptors(profile.person_id, descriptors);
     }));
     matcher = new faceapi.FaceMatcher(labeledDescriptors, threshold);
-    scanVideoButton.disabled = !uploadedVideoUrl;
+    recordVideoButton.disabled = !stream || !window.MediaRecorder;
     setStatus(`${profiles.length} enrolled profile(s) ready. Start the camera to scan.`);
   }
 
@@ -304,7 +301,7 @@
       const snapshot = document.createElement("img");
       snapshot.className = "profile-snapshot";
       snapshot.src = snapshotUrl;
-      snapshot.alt = `${profile.name} identified in the uploaded video`;
+      snapshot.alt = `${profile.name} identified in a captured camera frame`;
       content.append(snapshot);
     }
     card.append(icon, content);
@@ -333,8 +330,36 @@
     resultCards.replaceChildren(card);
   }
 
+  function renderRecordingMatches() {
+    const recognised = [...recordingMatchesByPerson.values()].sort((first, second) => first.time - second.time);
+    if (!recognised.length) return;
+    resultCards.hidden = false;
+    resultCards.replaceChildren(...recognised.map((face, index) =>
+      createProfileCard(
+        face.profile,
+        face.distance,
+        face.clothesColour,
+        index,
+        `Identified while recording at ${formatVideoTime(face.time)}`,
+        face.snapshotUrl
+      )
+    ));
+  }
+
+  function retainRecordingMatches(recognizedFaces, snapshotUrl) {
+    const elapsed = (Date.now() - recordingStartedAt) / 1000;
+    for (const face of recognizedFaces) {
+      const existing = recordingMatchesByPerson.get(face.profile.person_id);
+      if (!existing || face.distance < existing.distance) {
+        recordingMatchesByPerson.set(face.profile.person_id, { ...face, snapshotUrl, time: elapsed });
+      }
+    }
+    renderRecordingMatches();
+  }
+
   async function scanFrame() {
-    if (scanningPaused) {
+    const recording = isRecording();
+    if (scanningPaused && !recording) {
       scanningPaused = false;
       clearResult();
       scanButton.textContent = "Scan Face";
@@ -350,8 +375,12 @@
         .withFaceLandmarks()
         .withFaceDescriptors();
       if (!detections.length) {
-        showNoMatch("No face detected. Center one well-lit face in the camera and try again.");
-        setStatus("No face detected.", "warning");
+        if (recording) {
+          setStatus("Recording video… no face is visible in this frame.", "warning");
+        } else {
+          showNoMatch("No face detected. Center one well-lit face in the camera and try again.");
+          setStatus("No face detected.", "warning");
+        }
         return;
       }
       setStatus(`${detections.length} face${detections.length === 1 ? "" : "s"} detected. Checking enrolled profile…`);
@@ -363,7 +392,12 @@
       const recognizedFaces = matchedProfiles
         .map((profile, index) => profile ? { profile, distance: bestMatches[index].distance, clothesColour: capturedFrame.clothesColours[index] } : null)
         .filter(Boolean);
-      if (recognizedFaces.length) {
+      if (recognizedFaces.length && recording) {
+        retainRecordingMatches(recognizedFaces, capturedFrame.imageUrl);
+        const count = recordingMatchesByPerson.size;
+        setRecordingStatus(`● Recording — ${count} enrolled face${count === 1 ? "" : "s"} identified so far.`);
+        setStatus(`Recording video… ${count} enrolled face${count === 1 ? "" : "s"} identified so far.`);
+      } else if (recognizedFaces.length) {
         resultCards.hidden = false;
         resultCards.replaceChildren(...recognizedFaces.map((face, index) =>
           createProfileCard(face.profile, face.distance, face.clothesColour, index)
@@ -371,8 +405,12 @@
         stopAutomaticScanning();
         setStatus(`${recognizedFaces.length} face${recognizedFaces.length === 1 ? "" : "s"} recognized. Scanning is paused; click Restart Scanning for a new scan.`);
       } else {
-        showNoMatch("This face does not match an enrolled profile.");
-        setStatus("Face not recognized.");
+        if (recording) {
+          setStatus("Recording video… face found, but it is not an enrolled profile.", "warning");
+        } else {
+          showNoMatch("This face does not match an enrolled profile.");
+          setStatus("Face not recognized.");
+        }
       }
     } catch (error) {
       console.error("Scan failed", error);
@@ -384,118 +422,82 @@
     }
   }
 
-  async function chooseVideo() {
-    const file = videoUpload.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith("video/")) {
-      setStatus("Choose a valid video file such as MP4, MOV, or WebM.", "error");
-      videoUpload.value = "";
-      return;
-    }
-    stopCameraStream();
-    scanningPaused = false;
-    video.pause();
-    video.srcObject = null;
-    clearUploadedVideo();
-    uploadedVideoUrl = URL.createObjectURL(file);
-    uploadedVideoName = file.name;
-    video.src = uploadedVideoUrl;
-    video.muted = true;
-    video.controls = true;
-    video.playsInline = true;
-    placeholder.hidden = true;
-    selectedVideo.textContent = `Selected video: ${file.name}`;
-    selectedVideo.hidden = false;
-    startButton.disabled = false;
-    startButton.textContent = "Start Camera";
-    scanButton.disabled = true;
-    scanButton.textContent = "Scan Face";
-    scanVideoButton.disabled = !matcher;
-    setStatus(matcher ? "Video ready. Click Analyse Video to scan every face in it." : "Loading recognition model. Video analysis will unlock when it is ready.");
+  function recordingMimeType() {
+    if (!window.MediaRecorder?.isTypeSupported) return "";
+    return ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"]
+      .find((type) => MediaRecorder.isTypeSupported(type)) || "";
   }
 
-  async function analyseUploadedVideo() {
-    if (!uploadedVideoUrl || !matcher || isVideoScanning) return;
-    try {
-      isVideoScanning = true;
-      clearResult();
-      scanVideoButton.disabled = true;
-      startButton.disabled = true;
-      video.pause();
-      if (video.readyState < HTMLMediaElement.HAVE_METADATA) await waitForVideoEvent("loadedmetadata");
-      if (!Number.isFinite(video.duration) || video.duration <= 0) throw new Error("The selected video has no readable duration.");
-
-      const maxSamples = 240;
-      const sampleEvery = Math.max(0.5, video.duration / maxSamples);
-      const sampleTimes = [];
-      for (let time = 0; time < video.duration; time += sampleEvery) sampleTimes.push(time);
-      if (!sampleTimes.length) sampleTimes.push(0);
-
-      const bestMatchesByPerson = new Map();
-      let faceFrames = 0;
-      for (let sampleIndex = 0; sampleIndex < sampleTimes.length; sampleIndex += 1) {
-        const sampleTime = sampleTimes[sampleIndex];
-        await seekVideo(sampleTime);
-        const detections = await faceapi
-          .detectAllFaces(video, DETECTION_OPTIONS)
-          .withFaceLandmarks()
-          .withFaceDescriptors();
-        if (detections.length) faceFrames += 1;
-
-        const nearest = detections.map((detection) => matcher.findBestMatch(detection.descriptor));
-        const improving = nearest
-          .map((match, index) => ({ match, index }))
-          .filter(({ match }) => match.label !== "unknown")
-          .filter(({ match }) => !bestMatchesByPerson.has(match.label) || match.distance < bestMatchesByPerson.get(match.label).distance);
-
-        if (improving.length) {
-          const profilesForFrame = await Promise.all(improving.map(({ match }) => fetchProfile(match.label)));
-          const matchedProfiles = detections.map(() => null);
-          improving.forEach((candidate, index) => { matchedProfiles[candidate.index] = profilesForFrame[index]; });
-          const capturedFrame = captureAnnotatedImage(detections, matchedProfiles, video, false);
-          improving.forEach((candidate, index) => {
-            bestMatchesByPerson.set(candidate.match.label, {
-              profile: profilesForFrame[index],
-              distance: candidate.match.distance,
-              clothesColour: capturedFrame.clothesColours[candidate.index],
-              snapshotUrl: capturedFrame.imageUrl,
-              time: sampleTime
-            });
-          });
-        }
-        setStatus(`Analysing video: ${sampleIndex + 1} of ${sampleTimes.length} frame samples…`);
-      }
-
-      const recognised = [...bestMatchesByPerson.values()].sort((first, second) => first.time - second.time);
-      if (recognised.length) {
-        resultCards.hidden = false;
-        resultCards.replaceChildren(...recognised.map((face, index) =>
-          createProfileCard(
-            face.profile,
-            face.distance,
-            face.clothesColour,
-            index,
-            `Found in uploaded video at ${formatVideoTime(face.time)}`,
-            face.snapshotUrl
-          )
-        ));
-        lastScannedImage.src = recognised[0].snapshotUrl;
-        lastScanCard.hidden = false;
-        setStatus(`${recognised.length} enrolled face${recognised.length === 1 ? "" : "s"} identified in ${uploadedVideoName}.`);
-      } else {
-        showNoMatch(faceFrames ? "Faces were found, but none matched an enrolled profile in this video." : "No clear face was found in this video. Choose a brighter video with visible faces.");
-        setStatus("Video analysis complete.", faceFrames ? "warning" : "error");
-      }
-      await seekVideo(0);
-    } catch (error) {
-      console.error("Video analysis failed", error);
-      showNoMatch(`Video analysis could not finish: ${error.message}`);
-      setStatus("Video analysis failed. Try MP4/WebM and a shorter, well-lit clip.", "error");
-    } finally {
-      isVideoScanning = false;
-      scanVideoButton.disabled = !uploadedVideoUrl || !matcher;
-      startButton.disabled = false;
+  function finishRecording() {
+    const blob = new Blob(recordingChunks, { type: mediaRecorder?.mimeType || "video/webm" });
+    if (blob.size) {
+      clearRecordedVideo();
+      recordingUrl = URL.createObjectURL(blob);
+      lastCapturedVideo.src = recordingUrl;
+      lastVideoCard.hidden = false;
     }
+    const count = recordingMatchesByPerson.size;
+    if (count) {
+      renderRecordingMatches();
+      setStatus(`Video captured. ${count} enrolled face${count === 1 ? "" : "s"} identified with separate details below.`);
+    } else {
+      showNoMatch("No enrolled face was identified while this video was being recorded.");
+      setStatus("Video captured, but no enrolled face was identified.", "warning");
+    }
+    setRecordingStatus("");
+    recordVideoButton.classList.remove("is-recording");
+    recordVideoButton.textContent = "Capture Video";
+    recordVideoButton.disabled = !stream || !matcher;
+    if (stream) startAutomaticScanning(CAMERA_SCAN_INTERVAL);
+  }
+
+  function startRecording() {
+    if (!stream) {
+      setStatus("Start the camera before capturing a video.", "warning");
+      return;
+    }
+    if (!matcher) {
+      setStatus("Recognition is still loading. Please wait a moment.", "warning");
+      return;
+    }
+    if (!window.MediaRecorder) {
+      setStatus("This browser cannot record video. Open the site in a current Chrome, Edge, or Firefox browser.", "error");
+      return;
+    }
+    try {
+      clearResult();
+      clearRecordedVideo();
+      recordingMatchesByPerson.clear();
+      recordingChunks = [];
+      recordingStartedAt = Date.now();
+      scanningPaused = false;
+      const mimeType = recordingMimeType();
+      mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      mediaRecorder.addEventListener("dataavailable", (event) => {
+        if (event.data?.size) recordingChunks.push(event.data);
+      });
+      mediaRecorder.addEventListener("stop", finishRecording, { once: true });
+      mediaRecorder.start(1000);
+      recordVideoButton.classList.add("is-recording");
+      recordVideoButton.textContent = "Stop Recording";
+      setRecordingStatus("● Recording — looking for enrolled faces in every frame.");
+      setStatus("Recording video and scanning for enrolled faces…");
+      startAutomaticScanning(RECORDING_SCAN_INTERVAL);
+      window.setTimeout(scanFrame, 120);
+    } catch (error) {
+      console.error("Video recording failed", error);
+      setStatus("Could not start video recording. Try again after restarting the camera.", "error");
+    }
+  }
+
+  function toggleRecording() {
+    if (isRecording()) {
+      recordVideoButton.disabled = true;
+      recordVideoButton.textContent = "Saving Video…";
+      mediaRecorder.stop();
+      return;
+    }
+    startRecording();
   }
 
   async function startCamera() {
@@ -509,10 +511,7 @@
       return;
     }
     try {
-      clearUploadedVideo();
       video.srcObject = null;
-      videoUpload.value = "";
-      scanVideoButton.disabled = true;
       const compactScreen = window.matchMedia("(max-width: 600px)").matches;
       stream = await navigator.mediaDevices.getUserMedia({
         video: compactScreen
@@ -526,8 +525,12 @@
       startButton.textContent = "Camera On";
       startButton.disabled = true;
       scanButton.disabled = false;
+      recordVideoButton.disabled = !matcher || !window.MediaRecorder;
+      recordVideoButton.textContent = "Capture Video";
+      recordVideoButton.classList.remove("is-recording");
+      setRecordingStatus("");
       setStatus("Camera ready. Position one face in good light; scanning starts automatically.");
-      scanTimer = window.setInterval(scanFrame, 2500);
+      startAutomaticScanning(CAMERA_SCAN_INTERVAL);
       // Do not make the person wait for the first interval tick. This also
       // provides an immediate visible status change after Camera On is shown.
       window.setTimeout(scanFrame, 600);
@@ -539,11 +542,10 @@
 
   startButton.addEventListener("click", startCamera);
   scanButton.addEventListener("click", scanFrame);
-  videoUpload.addEventListener("change", chooseVideo);
-  scanVideoButton.addEventListener("click", analyseUploadedVideo);
+  recordVideoButton.addEventListener("click", toggleRecording);
   window.addEventListener("beforeunload", () => {
     stopCameraStream();
-    if (uploadedVideoUrl) URL.revokeObjectURL(uploadedVideoUrl);
+    if (recordingUrl) URL.revokeObjectURL(recordingUrl);
   });
   loadRecognition().catch(modelError);
 })();

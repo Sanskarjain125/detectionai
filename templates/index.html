@@ -32,15 +32,12 @@
           <button id="startCamera" class="button button-primary" type="button">Start Camera</button>
           <button id="scanFace" class="button button-secondary" type="button" disabled>Scan Face</button>
         </div>
-        <div class="upload-actions">
-          <label class="button button-upload" for="videoUpload">Choose Video
-            <input id="videoUpload" type="file" accept="video/*" hidden>
-          </label>
-          <button id="scanVideo" class="button button-secondary" type="button" disabled>Analyse Video</button>
+        <div class="record-actions">
+          <button id="recordVideo" class="button button-record" type="button" disabled>Capture Video</button>
         </div>
-        <p id="selectedVideo" class="selected-video" hidden></p>
+        <p id="recordingStatus" class="recording-status" hidden aria-live="polite"></p>
         <p id="statusMessage" class="status-message" role="status" aria-live="polite">Loading the recognition model…</p>
-        <p class="privacy-note">Camera frames and selected videos are processed only in this browser. They are not uploaded for a scan.</p>
+        <p class="privacy-note">Camera frames and captured videos are processed only in this browser. They are not uploaded for a scan.</p>
       </section>
 
       <section id="lastScanCard" class="last-scan-card" hidden aria-live="polite">
@@ -50,6 +47,15 @@
           <p class="last-scan-note">Face labels and arrows are drawn from this captured camera frame.</p>
         </div>
         <img id="lastScannedImage" alt="Last scanned camera image with identified face labels and arrows">
+      </section>
+
+      <section id="lastVideoCard" class="last-scan-card" hidden aria-live="polite">
+        <div>
+          <p class="result-label">Last captured video</p>
+          <h2>Recorded face scan</h2>
+          <p class="last-scan-note">Faces identified while recording are shown separately below, with the final camera capture retained here.</p>
+        </div>
+        <video id="lastCapturedVideo" controls playsinline></video>
       </section>
 
       <section id="resultCards" class="result-cards" hidden aria-live="polite"></section>
