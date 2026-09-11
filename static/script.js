@@ -2,6 +2,9 @@
   const video = document.querySelector("#camera");
   const startButton = document.querySelector("#startCamera");
   const scanButton = document.querySelector("#scanFace");
+  const videoUpload = document.querySelector("#videoUpload");
+  const scanVideoButton = document.querySelector("#scanVideo");
+  const selectedVideo = document.querySelector("#selectedVideo");
   const placeholder = document.querySelector("#cameraPlaceholder");
   const overlay = document.querySelector("#scanOverlay");
   const statusMessage = document.querySelector("#statusMessage");
@@ -15,8 +18,11 @@
   let stream = null;
   let matcher = null;
   let isScanning = false;
+  let isVideoScanning = false;
   let scanningPaused = false;
   let scanTimer = null;
+  let uploadedVideoUrl = null;
+  let uploadedVideoName = "";
   const DETECTION_OPTIONS = new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.35 });
 
   function setStatus(message, kind = "") {
@@ -29,6 +35,50 @@
     resultCards.replaceChildren();
     lastScanCard.hidden = true;
     lastScannedImage.removeAttribute("src");
+  }
+
+  function stopCameraStream() {
+    stream?.getTracks().forEach((track) => track.stop());
+    stream = null;
+    if (scanTimer) window.clearInterval(scanTimer);
+    scanTimer = null;
+  }
+
+  function clearUploadedVideo() {
+    if (uploadedVideoUrl) URL.revokeObjectURL(uploadedVideoUrl);
+    uploadedVideoUrl = null;
+    uploadedVideoName = "";
+    selectedVideo.hidden = true;
+    selectedVideo.textContent = "";
+    video.removeAttribute("src");
+    video.controls = false;
+    video.load();
+  }
+
+  function waitForVideoEvent(eventName) {
+    return new Promise((resolve, reject) => {
+      const onEvent = () => { cleanup(); resolve(); };
+      const onError = () => { cleanup(); reject(new Error("The selected video could not be read.")); };
+      const cleanup = () => {
+        video.removeEventListener(eventName, onEvent);
+        video.removeEventListener("error", onError);
+      };
+      video.addEventListener(eventName, onEvent, { once: true });
+      video.addEventListener("error", onError, { once: true });
+    });
+  }
+
+  async function seekVideo(seconds) {
+    if (Math.abs(video.currentTime - seconds) < 0.05) return;
+    const seeked = waitForVideoEvent("seeked");
+    video.currentTime = Math.min(seconds, Math.max(0, video.duration - 0.05));
+    await seeked;
+  }
+
+  function formatVideoTime(seconds) {
+    const minutes = Math.floor(seconds / 60);
+    const remainder = Math.floor(seconds % 60).toString().padStart(2, "0");
+    return `${minutes}:${remainder}`;
   }
 
   function modelError(error) {
@@ -61,6 +111,7 @@
       return new faceapi.LabeledFaceDescriptors(profile.person_id, descriptors);
     }));
     matcher = new faceapi.FaceMatcher(labeledDescriptors, threshold);
+    scanVideoButton.disabled = !uploadedVideoUrl;
     setStatus(`${profiles.length} enrolled profile(s) ready. Start the camera to scan.`);
   }
 
@@ -159,12 +210,12 @@
     };
   }
 
-  function captureAnnotatedImage(detections, matches) {
+  function captureAnnotatedImage(detections, matches, source = video, showCapture = true) {
     const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    canvas.width = source.videoWidth;
+    canvas.height = source.videoHeight;
     const context = canvas.getContext("2d");
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    context.drawImage(source, 0, 0, canvas.width, canvas.height);
     context.lineWidth = Math.max(3, Math.round(canvas.width / 220));
     context.font = `bold ${Math.max(16, Math.round(canvas.width / 32))}px system-ui, sans-serif`;
     const clothesColours = detections.map((detection) =>
@@ -185,9 +236,12 @@
       context.fillStyle = colour;
       context.fillText(label, x + 10, y + 21);
     });
-    lastScannedImage.src = canvas.toDataURL("image/jpeg", 0.9);
-    lastScanCard.hidden = false;
-    return clothesColours;
+    const imageUrl = canvas.toDataURL("image/jpeg", 0.9);
+    if (showCapture) {
+      lastScannedImage.src = imageUrl;
+      lastScanCard.hidden = false;
+    }
+    return { clothesColours, imageUrl };
   }
 
   function stopAutomaticScanning() {
@@ -197,7 +251,7 @@
     scanButton.textContent = "Restart Scanning";
   }
 
-  function createProfileCard(profile, distance, clothesColour, index) {
+  function createProfileCard(profile, distance, clothesColour, index, sourceNote = "", snapshotUrl = "") {
     const card = document.createElement("article");
     card.className = "result-card";
     const icon = document.createElement("div");
@@ -213,6 +267,9 @@
     const confidence = document.createElement("p");
     confidence.className = "confidence";
     confidence.textContent = `Match confidence: ${Math.max(0, (1 - distance) * 100).toFixed(1)}%`;
+    const source = document.createElement("p");
+    source.className = "source-note";
+    source.textContent = sourceNote;
     const details = document.createElement("dl");
     details.className = "details-list";
     appendProfileDetails(details, profile.details, clothesColour);
@@ -240,7 +297,16 @@
       `Clothes colour: ${clothesColour === "not visible" ? "show upper body in camera" : clothesColour}`
     );
     summary.append(summaryLabel, summaryList);
-    content.append(label, name, confidence, details, summary);
+    content.append(label, name, confidence);
+    if (sourceNote) content.append(source);
+    content.append(details, summary);
+    if (snapshotUrl) {
+      const snapshot = document.createElement("img");
+      snapshot.className = "profile-snapshot";
+      snapshot.src = snapshotUrl;
+      snapshot.alt = `${profile.name} identified in the uploaded video`;
+      content.append(snapshot);
+    }
     card.append(icon, content);
     return card;
   }
@@ -293,9 +359,9 @@
       const matchedProfiles = await Promise.all(bestMatches.map((match) =>
         match.label === "unknown" ? null : fetchProfile(match.label)
       ));
-      const clothesColours = captureAnnotatedImage(detections, matchedProfiles);
+      const capturedFrame = captureAnnotatedImage(detections, matchedProfiles);
       const recognizedFaces = matchedProfiles
-        .map((profile, index) => profile ? { profile, distance: bestMatches[index].distance, clothesColour: clothesColours[index] } : null)
+        .map((profile, index) => profile ? { profile, distance: bestMatches[index].distance, clothesColour: capturedFrame.clothesColours[index] } : null)
         .filter(Boolean);
       if (recognizedFaces.length) {
         resultCards.hidden = false;
@@ -318,6 +384,120 @@
     }
   }
 
+  async function chooseVideo() {
+    const file = videoUpload.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("video/")) {
+      setStatus("Choose a valid video file such as MP4, MOV, or WebM.", "error");
+      videoUpload.value = "";
+      return;
+    }
+    stopCameraStream();
+    scanningPaused = false;
+    video.pause();
+    video.srcObject = null;
+    clearUploadedVideo();
+    uploadedVideoUrl = URL.createObjectURL(file);
+    uploadedVideoName = file.name;
+    video.src = uploadedVideoUrl;
+    video.muted = true;
+    video.controls = true;
+    video.playsInline = true;
+    placeholder.hidden = true;
+    selectedVideo.textContent = `Selected video: ${file.name}`;
+    selectedVideo.hidden = false;
+    startButton.disabled = false;
+    startButton.textContent = "Start Camera";
+    scanButton.disabled = true;
+    scanButton.textContent = "Scan Face";
+    scanVideoButton.disabled = !matcher;
+    setStatus(matcher ? "Video ready. Click Analyse Video to scan every face in it." : "Loading recognition model. Video analysis will unlock when it is ready.");
+  }
+
+  async function analyseUploadedVideo() {
+    if (!uploadedVideoUrl || !matcher || isVideoScanning) return;
+    try {
+      isVideoScanning = true;
+      clearResult();
+      scanVideoButton.disabled = true;
+      startButton.disabled = true;
+      video.pause();
+      if (video.readyState < HTMLMediaElement.HAVE_METADATA) await waitForVideoEvent("loadedmetadata");
+      if (!Number.isFinite(video.duration) || video.duration <= 0) throw new Error("The selected video has no readable duration.");
+
+      const maxSamples = 240;
+      const sampleEvery = Math.max(0.5, video.duration / maxSamples);
+      const sampleTimes = [];
+      for (let time = 0; time < video.duration; time += sampleEvery) sampleTimes.push(time);
+      if (!sampleTimes.length) sampleTimes.push(0);
+
+      const bestMatchesByPerson = new Map();
+      let faceFrames = 0;
+      for (let sampleIndex = 0; sampleIndex < sampleTimes.length; sampleIndex += 1) {
+        const sampleTime = sampleTimes[sampleIndex];
+        await seekVideo(sampleTime);
+        const detections = await faceapi
+          .detectAllFaces(video, DETECTION_OPTIONS)
+          .withFaceLandmarks()
+          .withFaceDescriptors();
+        if (detections.length) faceFrames += 1;
+
+        const nearest = detections.map((detection) => matcher.findBestMatch(detection.descriptor));
+        const improving = nearest
+          .map((match, index) => ({ match, index }))
+          .filter(({ match }) => match.label !== "unknown")
+          .filter(({ match }) => !bestMatchesByPerson.has(match.label) || match.distance < bestMatchesByPerson.get(match.label).distance);
+
+        if (improving.length) {
+          const profilesForFrame = await Promise.all(improving.map(({ match }) => fetchProfile(match.label)));
+          const matchedProfiles = detections.map(() => null);
+          improving.forEach((candidate, index) => { matchedProfiles[candidate.index] = profilesForFrame[index]; });
+          const capturedFrame = captureAnnotatedImage(detections, matchedProfiles, video, false);
+          improving.forEach((candidate, index) => {
+            bestMatchesByPerson.set(candidate.match.label, {
+              profile: profilesForFrame[index],
+              distance: candidate.match.distance,
+              clothesColour: capturedFrame.clothesColours[candidate.index],
+              snapshotUrl: capturedFrame.imageUrl,
+              time: sampleTime
+            });
+          });
+        }
+        setStatus(`Analysing video: ${sampleIndex + 1} of ${sampleTimes.length} frame samples…`);
+      }
+
+      const recognised = [...bestMatchesByPerson.values()].sort((first, second) => first.time - second.time);
+      if (recognised.length) {
+        resultCards.hidden = false;
+        resultCards.replaceChildren(...recognised.map((face, index) =>
+          createProfileCard(
+            face.profile,
+            face.distance,
+            face.clothesColour,
+            index,
+            `Found in uploaded video at ${formatVideoTime(face.time)}`,
+            face.snapshotUrl
+          )
+        ));
+        lastScannedImage.src = recognised[0].snapshotUrl;
+        lastScanCard.hidden = false;
+        setStatus(`${recognised.length} enrolled face${recognised.length === 1 ? "" : "s"} identified in ${uploadedVideoName}.`);
+      } else {
+        showNoMatch(faceFrames ? "Faces were found, but none matched an enrolled profile in this video." : "No clear face was found in this video. Choose a brighter video with visible faces.");
+        setStatus("Video analysis complete.", faceFrames ? "warning" : "error");
+      }
+      await seekVideo(0);
+    } catch (error) {
+      console.error("Video analysis failed", error);
+      showNoMatch(`Video analysis could not finish: ${error.message}`);
+      setStatus("Video analysis failed. Try MP4/WebM and a shorter, well-lit clip.", "error");
+    } finally {
+      isVideoScanning = false;
+      scanVideoButton.disabled = !uploadedVideoUrl || !matcher;
+      startButton.disabled = false;
+    }
+  }
+
   async function startCamera() {
     clearResult();
     if (!window.isSecureContext) {
@@ -329,6 +509,10 @@
       return;
     }
     try {
+      clearUploadedVideo();
+      video.srcObject = null;
+      videoUpload.value = "";
+      scanVideoButton.disabled = true;
       const compactScreen = window.matchMedia("(max-width: 600px)").matches;
       stream = await navigator.mediaDevices.getUserMedia({
         video: compactScreen
@@ -355,6 +539,11 @@
 
   startButton.addEventListener("click", startCamera);
   scanButton.addEventListener("click", scanFrame);
-  window.addEventListener("beforeunload", () => stream?.getTracks().forEach((track) => track.stop()));
+  videoUpload.addEventListener("change", chooseVideo);
+  scanVideoButton.addEventListener("click", analyseUploadedVideo);
+  window.addEventListener("beforeunload", () => {
+    stopCameraStream();
+    if (uploadedVideoUrl) URL.revokeObjectURL(uploadedVideoUrl);
+  });
   loadRecognition().catch(modelError);
 })();

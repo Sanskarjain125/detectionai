@@ -35,6 +35,7 @@ video { width: 100%; height: 100%; display: block; object-fit: cover; transform:
 @keyframes scan { from { top: 4%; } to { top: 94%; } }
 
 .actions { display: flex; gap: .75rem; padding-top: 1rem; }
+.upload-actions { display: flex; gap: .75rem; padding-top: .75rem; }
 .button { flex: 1; min-height: 48px; border: 0; border-radius: 11px; padding: .7rem 1rem; color: #fff; font: inherit; font-weight: 700; cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; transition: transform .18s ease, opacity .18s ease, background .18s ease, box-shadow .18s ease; }
 .button:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 8px 18px rgba(0, 0, 0, .22); }
 .button:active:not(:disabled) { transform: translateY(0) scale(.98); }
@@ -42,10 +43,12 @@ video { width: 100%; height: 100%; display: block; object-fit: cover; transform:
 .button:disabled { cursor: not-allowed; opacity: .48; }
 .button-primary { background: linear-gradient(135deg, #416ef0, #6957d8); }
 .button-secondary { background: #283756; }
+.button-upload { display: grid; place-items: center; background: #1d5d55; text-align: center; }
 .status-message { min-height: 1.5em; margin: 1rem .25rem .35rem; color: #c7d5ee; text-align: center; }
 .status-message.error { color: #ffb4b4; }
 .status-message.warning { color: #ffd483; }
 .privacy-note { margin: 0; color: #8090b0; font-size: .78rem; text-align: center; }
+.selected-video { margin: .75rem .25rem 0; color: #98efc5; font-size: .86rem; overflow-wrap: anywhere; text-align: center; }
 
 .result-card { display: flex; gap: 1rem; margin-top: 1rem; padding: 1.25rem; animation: reveal-card .3s ease-out both; }
 .result-cards { display: grid; gap: 1rem; margin-top: 1rem; }
@@ -55,12 +58,14 @@ video { width: 100%; height: 100%; display: block; object-fit: cover; transform:
 .last-scan-card h2 { margin: 0; font-size: 1.25rem; }
 .last-scan-note { margin: .35rem 0 1rem; color: #a7b7d7; font-size: .9rem; }
 #lastScannedImage { display: block; width: 100%; max-height: 540px; border-radius: 13px; background: #050914; object-fit: contain; }
+.profile-snapshot { display: block; width: min(100%, 360px); margin-top: 1rem; border: 1px solid rgba(147, 179, 255, .2); border-radius: 12px; background: #050914; }
 .result-icon { display: grid; flex: 0 0 42px; width: 42px; height: 42px; place-items: center; border-radius: 50%; background: #1c5c48; color: #b2f7d8; font-size: 1.3rem; font-weight: 800; }
 .result-card.not-recognized .result-icon { background: #6d2935; color: #ffc3ca; }
 .result-label { margin: .12rem 0 .25rem; color: #a7b7d7; font-size: .82rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
 .result-card h2 { margin: 0; font-size: 1.4rem; }
 .confidence { margin: .35rem 0 0; color: #98efc5; font-size: .92rem; }
 .result-card.not-recognized .confidence { color: #ffc3ca; }
+.source-note { margin: .45rem 0 0; color: #a7b7d7; font-size: .86rem; }
 .details-list { display: grid; grid-template-columns: auto 1fr; gap: .45rem 1rem; margin: .9rem 0 0; }
 .details-list dt { color: #91a1c1; font-size: .88rem; font-weight: 700; text-transform: capitalize; }
 .details-list dd { margin: 0; color: #fff; font-size: .92rem; overflow-wrap: anywhere; }
@@ -75,8 +80,10 @@ video { width: 100%; height: 100%; display: block; object-fit: cover; transform:
   .scanner-card { padding: 0; border-right: 0; border-left: 0; border-radius: 0; background: transparent; box-shadow: none; }
   .camera-frame { width: 100vw; height: min(78svh, 760px); min-height: 540px; aspect-ratio: 3 / 4; border-radius: 0; }
   .scan-overlay { inset: 5%; border-radius: 22px; }
-  .actions { padding: .75rem 1rem 0; }
-  .status-message, .privacy-note, .camera-hint { margin-right: 1rem; margin-left: 1rem; }
+  .actions, .upload-actions { padding-right: 1rem; padding-left: 1rem; }
+  .actions { padding-top: .75rem; }
+  .upload-actions { padding-top: .65rem; }
+  .status-message, .privacy-note, .camera-hint, .selected-video { margin-right: 1rem; margin-left: 1rem; }
   .result-card, .last-scan-card { margin-right: 1rem; margin-left: 1rem; }
   .result-card { padding: 1rem; }
   .details-list { grid-template-columns: minmax(106px, .8fr) 1.4fr; gap: .5rem .7rem; }
@@ -84,7 +91,7 @@ video { width: 100%; height: 100%; display: block; object-fit: cover; transform:
 
 @media (max-width: 380px) {
   .camera-frame { min-height: 480px; height: min(72svh, 620px); }
-  .actions { gap: .5rem; padding-right: .75rem; padding-left: .75rem; }
+  .actions, .upload-actions { gap: .5rem; padding-right: .75rem; padding-left: .75rem; }
   .button { min-height: 46px; padding-right: .5rem; padding-left: .5rem; }
 }
 

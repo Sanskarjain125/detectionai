@@ -32,8 +32,15 @@
           <button id="startCamera" class="button button-primary" type="button">Start Camera</button>
           <button id="scanFace" class="button button-secondary" type="button" disabled>Scan Face</button>
         </div>
+        <div class="upload-actions">
+          <label class="button button-upload" for="videoUpload">Choose Video
+            <input id="videoUpload" type="file" accept="video/*" hidden>
+          </label>
+          <button id="scanVideo" class="button button-secondary" type="button" disabled>Analyse Video</button>
+        </div>
+        <p id="selectedVideo" class="selected-video" hidden></p>
         <p id="statusMessage" class="status-message" role="status" aria-live="polite">Loading the recognition model…</p>
-        <p class="privacy-note">Camera frames are processed in this browser. They are not uploaded for a scan.</p>
+        <p class="privacy-note">Camera frames and selected videos are processed only in this browser. They are not uploaded for a scan.</p>
       </section>
 
       <section id="lastScanCard" class="last-scan-card" hidden aria-live="polite">
