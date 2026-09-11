@@ -1,6 +1,8 @@
-# Local Face Scanner
+# Face Scanner website
 
-This is a local-only Flask face-recognition app. It opens your default browser at `http://127.0.0.1:5000`, reads your webcam in the browser, and sends camera frames only to the Flask process running on your own computer. It does not upload images or details to a remote service.
+This project is a website-first face scanner. On Vercel, the camera and face matching run in the visitor's browser; live camera frames are not posted to the Flask/Vercel server. The small Flask app serves the page, enrolled reference images, and profile data.
+
+The native Python scanner and `android_app/` are retained only as local-development material. They are not needed for the website or Vercel deployment.
 
 ## What you need
 
@@ -28,11 +30,13 @@ After the dependencies are installed, the only command needed on later runs is:
 
 The launcher starts Flask and opens your default browser automatically. Leave the PowerShell window open while using the app; press `Ctrl+C` there to stop it.
 
-## Android APK and phone camera
+## Local Android APK (optional, not needed for the website)
 
-The companion Android project is in `android_app/`. Its debug APK is built at `android_app/app/build/outputs/apk/debug/FaceScanner.apk`. Install it on a phone connected to the same Wi-Fi as this PC. The app opens the scanner at `http://192.168.1.64:5000/` and asks for camera permission; it requests the phone's front camera. If your PC’s Wi-Fi IP changes, replace the URL in the APK's top address field with the current `http://<PC-IP>:5000/` address, then tap **Open Scanner**.
+The companion Android project is in `android_app/`. Its debug APK is built at `android_app/app/build/outputs/apk/debug/FaceScanner.apk`. Install it on a phone connected to the same Wi-Fi as this PC. The app uses the phone's native front camera and sends the captured scan only to `http://192.168.29.163:5000/`; it does not depend on a browser camera at that LAN address. If your PC’s Wi-Fi IP changes, replace the URL in the APK's top address field with the current `http://<PC-IP>:5000/`, then tap **Connect**.
 
 Keep `python run.py` running on the PC while using the APK. The recognition backend stays on the PC because the requested Flask + dlib `face_recognition` stack is desktop Python software; the APK securely acts as the mobile camera client. If Windows Firewall asks about Python on a private network, allow it only on your private home/office network so the phone can connect.
+
+For the desktop browser on the PC itself, open `http://127.0.0.1:5000/`. Do not use the `192.168.x.x` address in a desktop browser when you need its webcam: browsers allow camera access on local `127.0.0.1`, but block it on a plain-HTTP LAN address.
 
 ### Windows dependency note
 
@@ -89,6 +93,6 @@ Face recognition is probabilistic. Use it only with the knowledge and permission
 
 ## Vercel deployment
 
-The repository includes `vercel.json` and `.python-version` so the Flask interface can deploy as a lightweight Vercel Function. Vercel imports `app.py` directly (it does not run `run.py`), and the app now handles unavailable native recognition packages without crashing the function.
+The repository includes `vercel.json` and `.python-version` for a lightweight Flask Function. Vercel imports `app.py` directly; it does not run `run.py`. The deployed browser downloads the recognition model, encodes the enrolled reference images, and matches the camera feed locally in the browser. This works without Vercel-native dlib packages.
 
-For privacy, Git intentionally excludes `known_faces/` photos and the real `details.json`. Therefore, the Vercel page can load successfully but has no enrolled face dataset. Keep face recognition on the local server unless you deliberately choose an approved, secure biometric-data store and deployment process.
+`known_faces/` and `details.json` are currently versioned and therefore will be deployed with the site. Confirm that every enrolled person has explicitly agreed to this before making the repository or Vercel project public. Use a private GitHub repository and Vercel access controls if the data is not intended for public access.

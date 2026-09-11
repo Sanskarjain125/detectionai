@@ -1,6 +1,5 @@
 (() => {
   const video = document.querySelector("#camera");
-  const canvas = document.querySelector("#captureCanvas");
   const startButton = document.querySelector("#startCamera");
   const scanButton = document.querySelector("#scanFace");
   const placeholder = document.querySelector("#cameraPlaceholder");
@@ -15,12 +14,14 @@
   const lastScanCard = document.querySelector("#lastScanCard");
   const lastScannedImage = document.querySelector("#lastScannedImage");
 
+  const MODEL_URL = "https://justadudewhohacks.github.io/face-api.js/models";
+  const profiles = Array.isArray(window.ENROLLED_PROFILES) ? window.ENROLLED_PROFILES : [];
+  const threshold = Number(window.FACE_MATCH_THRESHOLD || 0.5);
   let stream = null;
-  let scanTimer = null;
+  let matcher = null;
   let isScanning = false;
-  let serverReady = false;
   let scanningPaused = false;
-  let serverStatusPromise = null;
+  let scanTimer = null;
 
   function setStatus(message, kind = "") {
     statusMessage.textContent = message;
@@ -34,162 +35,160 @@
     lastScannedImage.removeAttribute("src");
   }
 
-  function stopAutomaticScanning() {
-    if (scanTimer) {
-      window.clearInterval(scanTimer);
-      scanTimer = null;
+  function modelError(error) {
+    console.error("Face recognition setup failed", error);
+    setStatus("Recognition model could not load. Check your internet connection, then reload this page.", "error");
+  }
+
+  async function descriptorFromImage(url) {
+    const image = await faceapi.fetchImage(url);
+    const result = await faceapi
+      .detectSingleFace(image, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.45 }))
+      .withFaceLandmarks()
+      .withFaceDescriptor();
+    if (!result) throw new Error(`No clear single face was found in ${url}.`);
+    return result.descriptor;
+  }
+
+  async function loadRecognition() {
+    if (!window.faceapi) throw new Error("The face recognition library did not load.");
+    if (!profiles.length) throw new Error("No enrolled profiles are available.");
+    setStatus("Loading face recognition model…");
+    await Promise.all([
+      faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+      faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+      faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+    ]);
+    setStatus("Encoding enrolled reference photos…");
+    const labeledDescriptors = await Promise.all(profiles.map(async (profile) => {
+      const descriptors = await Promise.all(profile.reference_images.map(descriptorFromImage));
+      return new faceapi.LabeledFaceDescriptors(profile.person_id, descriptors);
+    }));
+    matcher = new faceapi.FaceMatcher(labeledDescriptors, threshold);
+    setStatus(`${profiles.length} enrolled profile(s) ready. Start the camera to scan.`);
+  }
+
+  function appendProfileDetails(details) {
+    for (const [key, value] of Object.entries(details || {})) {
+      if (key.toLowerCase() === "name") continue;
+      const term = document.createElement("dt");
+      const description = document.createElement("dd");
+      term.textContent = key.replace(/[_-]/g, " ");
+      description.textContent = String(value);
+      detailsList.append(term, description);
     }
+  }
+
+  function findProfile(personId) {
+    return profiles.find((profile) => profile.person_id === personId);
+  }
+
+  function captureAnnotatedImage(detections, matches) {
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext("2d");
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    context.lineWidth = Math.max(3, Math.round(canvas.width / 220));
+    context.font = `bold ${Math.max(16, Math.round(canvas.width / 32))}px system-ui, sans-serif`;
+    detections.forEach((detection, index) => {
+      const box = detection.detection.box;
+      const matchedProfile = matches[index];
+      const label = matchedProfile ? matchedProfile.name : "Not recognized";
+      const colour = matchedProfile ? "#38e7a3" : "#ff7885";
+      context.strokeStyle = colour;
+      context.strokeRect(box.x, box.y, box.width, box.height);
+      const width = Math.min(canvas.width - 8, context.measureText(label).width + 20);
+      const x = Math.max(4, Math.min(canvas.width - width - 4, box.x));
+      const y = Math.max(4, box.y - 34);
+      context.fillStyle = "rgba(5, 9, 20, .88)";
+      context.fillRect(x, y, width, 29);
+      context.fillStyle = colour;
+      context.fillText(label, x + 10, y + 21);
+    });
+    lastScannedImage.src = canvas.toDataURL("image/jpeg", 0.9);
+    lastScanCard.hidden = false;
+  }
+
+  function stopAutomaticScanning() {
+    if (scanTimer) window.clearInterval(scanTimer);
+    scanTimer = null;
     scanningPaused = true;
     scanButton.textContent = "Restart Scanning";
   }
 
-  function restartScanning() {
-    scanningPaused = false;
-    clearResult();
-    scanButton.textContent = "Scan Face";
-    setStatus("Scanning restarted. Position one face in good light.");
-    if (!scanTimer) scanTimer = window.setInterval(scanFrame, 2500);
-  }
-
-  function appendProfileDetails(list, details, clothesColour, prefix = "") {
-    for (const [key, value] of Object.entries(details)) {
-      if (key.toLowerCase() === "name") continue;
-      const term = document.createElement("dt");
-      const description = document.createElement("dd");
-      term.textContent = `${prefix}${key.replace(/[_-]/g, " ")}`;
-      description.textContent = String(value);
-      list.append(term, description);
-    }
-    const clothesTerm = document.createElement("dt");
-    const clothesDescription = document.createElement("dd");
-    clothesTerm.textContent = `${prefix}clothes colour (estimated)`;
-    clothesDescription.textContent = clothesColour || "Not clearly visible in this scan";
-    list.append(clothesTerm, clothesDescription);
-  }
-
-  function showResult({ recognized, title, message, matchConfidence, details = {}, clothesColour }) {
+  function showProfile(profile, distance) {
     resultCard.hidden = false;
-    resultCard.classList.toggle("not-recognized", !recognized);
-    resultIcon.textContent = recognized ? "✓" : "!";
-    resultLabel.textContent = recognized ? "Recognized face profile" : "Scan result";
-    resultName.textContent = title;
-    confidence.textContent = message || (matchConfidence ? `Match confidence: ${matchConfidence}%` : "");
+    resultCard.classList.remove("not-recognized");
+    resultIcon.textContent = "✓";
+    resultLabel.textContent = "Recognized face profile";
+    resultName.textContent = profile.name;
+    confidence.textContent = `Match confidence: ${Math.max(0, (1 - distance) * 100).toFixed(1)}%`;
     detailsList.replaceChildren();
-    if (recognized) {
-      appendProfileDetails(detailsList, details, clothesColour);
+    appendProfileDetails(profile.details);
+  }
+
+  function showNoMatch(message) {
+    resultCard.hidden = false;
+    resultCard.classList.add("not-recognized");
+    resultIcon.textContent = "!";
+    resultLabel.textContent = "Scan result";
+    resultName.textContent = "Face not recognized";
+    confidence.textContent = message;
+    detailsList.replaceChildren();
+  }
+
+  async function scanFrame() {
+    if (scanningPaused) {
+      scanningPaused = false;
+      clearResult();
+      scanButton.textContent = "Scan Face";
     }
-  }
-
-  function drawArrow(context, fromX, fromY, toX, toY, colour) {
-    const angle = Math.atan2(toY - fromY, toX - fromX);
-    const headLength = 10;
-    context.strokeStyle = colour;
-    context.fillStyle = colour;
-    context.lineWidth = 3;
-    context.beginPath();
-    context.moveTo(fromX, fromY);
-    context.lineTo(toX, toY);
-    context.stroke();
-    context.beginPath();
-    context.moveTo(toX, toY);
-    context.lineTo(toX - headLength * Math.cos(angle - Math.PI / 6), toY - headLength * Math.sin(angle - Math.PI / 6));
-    context.lineTo(toX - headLength * Math.cos(angle + Math.PI / 6), toY - headLength * Math.sin(angle + Math.PI / 6));
-    context.closePath();
-    context.fill();
-  }
-
-  function showAnnotatedCapture(dataUrl, faces) {
-    const source = new Image();
-    source.onload = () => {
-      const annotatedCanvas = document.createElement("canvas");
-      annotatedCanvas.width = source.naturalWidth;
-      annotatedCanvas.height = source.naturalHeight;
-      const context = annotatedCanvas.getContext("2d");
-      context.drawImage(source, 0, 0);
-      context.font = "bold 18px system-ui, sans-serif";
-      context.textBaseline = "middle";
-      faces.forEach((face, index) => {
-        const { top, right, bottom, left } = face.location;
-        const colour = face.match ? "#38e7a3" : "#ff7885";
-        const label = face.match ? face.name : "Not recognized";
-        const labelWidth = Math.min(260, context.measureText(label).width + 22);
-        const labelX = Math.max(6, Math.min(source.naturalWidth - labelWidth - 6, left));
-        const labelY = Math.max(28, top - 34 - (index % 2) * 28);
-        context.strokeStyle = colour;
-        context.lineWidth = 4;
-        context.strokeRect(left, top, right - left, bottom - top);
-        context.fillStyle = "rgba(5, 9, 20, .86)";
-        context.fillRect(labelX, labelY - 18, labelWidth, 30);
-        context.fillStyle = colour;
-        context.fillText(label, labelX + 10, labelY - 3);
-        drawArrow(context, labelX + Math.min(labelWidth / 2, 90), labelY + 13, (left + right) / 2, top + 4, colour);
-      });
-      lastScannedImage.src = annotatedCanvas.toDataURL("image/jpeg", 0.9);
-      lastScanCard.hidden = false;
-    };
-    source.onerror = () => {
-      lastScannedImage.src = dataUrl;
-      lastScanCard.hidden = false;
-    };
-    source.src = dataUrl;
-  }
-
-  async function showMatchedProfiles(faces) {
-    const profiles = await Promise.all(faces.map(async (face) => {
-      const response = await fetch(`/api/details/${encodeURIComponent(face.person_id)}`);
-      const payload = response.ok ? await response.json() : { details: {} };
-      return { ...face, details: payload.details };
-    }));
-
-    if (profiles.length === 1) {
-      const [profile] = profiles;
-      showResult({
-        recognized: true,
-        title: profile.name,
-        matchConfidence: profile.confidence,
-        details: profile.details,
-        clothesColour: profile.clothes_colour
-      });
-      return;
-    }
-
-    showResult({
-      recognized: true,
-      title: `${profiles.length} recognised faces`,
-      message: "Each recognised face is labelled in the captured image above."
-    });
-    for (const profile of profiles) {
-      const nameTerm = document.createElement("dt");
-      const nameDescription = document.createElement("dd");
-      nameTerm.textContent = "Recognised person";
-      nameDescription.textContent = `${profile.name} — match confidence: ${profile.confidence}%`;
-      detailsList.append(nameTerm, nameDescription);
-      appendProfileDetails(detailsList, profile.details, profile.clothes_colour, `${profile.name} — `);
-    }
-  }
-
-  async function checkServerStatus() {
+    if (isScanning || !stream || !matcher) return;
+    isScanning = true;
+    scanButton.disabled = true;
+    overlay.hidden = false;
+    setStatus("Scanning face in this browser…");
     try {
-      const response = await fetch("/api/status");
-      const status = await response.json();
-      serverReady = status.ready;
-      if (serverReady) {
-        setStatus(`${status.reference_count} enrolled face record(s) loaded. Start the camera to scan.`);
-      } else {
-        setStatus("No reference faces are loaded. Add photos to known_faces, then restart the app.", "warning");
+      const detections = await faceapi
+        .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.45 }))
+        .withFaceLandmarks()
+        .withFaceDescriptors();
+      if (!detections.length) {
+        showNoMatch("No face detected. Center one well-lit face in the camera and try again.");
+        setStatus("No face detected.", "warning");
+        return;
       }
-    } catch {
-      setStatus("Could not check the local recognition service.", "error");
+      const bestMatches = detections.map((detection) => matcher.findBestMatch(detection.descriptor));
+      const matchedProfiles = bestMatches.map((match) => match.label === "unknown" ? null : findProfile(match.label));
+      captureAnnotatedImage(detections, matchedProfiles);
+      const matchIndex = matchedProfiles.findIndex(Boolean);
+      if (matchIndex !== -1) {
+        showProfile(matchedProfiles[matchIndex], bestMatches[matchIndex].distance);
+        stopAutomaticScanning();
+        setStatus("Face recognized. Scanning is paused; click Restart Scanning for a new scan.");
+      } else {
+        showNoMatch("This face does not match an enrolled profile.");
+        setStatus("Face not recognized.");
+      }
+    } catch (error) {
+      console.error("Scan failed", error);
+      setStatus("The scan could not finish. Improve lighting and try again.", "error");
+    } finally {
+      isScanning = false;
+      overlay.hidden = true;
+      scanButton.disabled = !stream || !matcher;
     }
   }
 
   async function startCamera() {
     clearResult();
-    // The status request begins when the page loads.  Waiting for it here
-    // prevents a fast click on Start Camera from using the initial false value.
-    if (serverStatusPromise) await serverStatusPromise;
+    if (!window.isSecureContext) {
+      setStatus("Camera access needs HTTPS (or localhost). Open this site through Vercel or use localhost.", "error");
+      return;
+    }
     if (!navigator.mediaDevices?.getUserMedia) {
-      setStatus("This browser does not support webcam access. Use a current Chrome, Edge, or Firefox browser.", "error");
+      setStatus("Use a current Chrome, Edge, or Firefox browser and allow camera access.", "error");
       return;
     }
     try {
@@ -202,74 +201,17 @@
       placeholder.hidden = true;
       startButton.textContent = "Camera On";
       startButton.disabled = true;
-      scanButton.disabled = !serverReady;
-      setStatus(serverReady ? "Camera ready. Position one face in good light; scanning automatically every 2.5 seconds." : "Camera ready, but no reference faces are available.", serverReady ? "" : "warning");
-      if (serverReady) scanTimer = window.setInterval(scanFrame, 2500);
+      scanButton.disabled = false;
+      setStatus("Camera ready. Position one face in good light; scanning starts automatically.");
+      scanTimer = window.setInterval(scanFrame, 2500);
     } catch (error) {
-      const permissionDenied = error.name === "NotAllowedError" || error.name === "SecurityError";
-      setStatus(permissionDenied ? "Camera permission was denied. Allow camera access in your browser settings, then reload." : `Could not start the camera: ${error.message}`, "error");
-    }
-  }
-
-  function frameDataUrl() {
-    const width = video.videoWidth;
-    const height = video.videoHeight;
-    if (!width || !height) throw new Error("The camera is not ready yet.");
-    // Smaller frames reduce latency while preserving enough detail for matching.
-    const scale = Math.min(1, 640 / width);
-    canvas.width = Math.round(width * scale);
-    canvas.height = Math.round(height * scale);
-    const context = canvas.getContext("2d", { willReadFrequently: false });
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL("image/jpeg", 0.88);
-  }
-
-  async function scanFrame() {
-    if (scanningPaused) {
-      restartScanning();
-    }
-    if (isScanning || !stream || !serverReady) return;
-    isScanning = true;
-    scanButton.disabled = true;
-    overlay.hidden = false;
-    setStatus("Scanning face…");
-    try {
-      const capturedFrame = frameDataUrl();
-      const response = await fetch("/scan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: capturedFrame })
-      });
-      const data = await response.json();
-      if (!response.ok && data.reason === "no_reference_faces") serverReady = false;
-      const detectedFaces = Array.isArray(data.faces) ? data.faces : [];
-      if (detectedFaces.length) showAnnotatedCapture(capturedFrame, detectedFaces);
-
-      if (data.match) {
-        const matchedFaces = detectedFaces.filter((face) => face.match);
-        await showMatchedProfiles(matchedFaces);
-        stopAutomaticScanning();
-        setStatus("Face recognized. The captured image and details are shown below; scanning is paused. Click Restart Scanning for a new scan.");
-      } else {
-        const friendlyMessage = data.message || "Face not recognized.";
-        const title = detectedFaces.length > 1 ? "Faces not recognized" : "Face not recognized";
-        showResult({ recognized: false, title, message: friendlyMessage });
-        setStatus(friendlyMessage, data.reason === "low_light" ? "warning" : "");
-      }
-    } catch (error) {
-      setStatus(`Scan failed: ${error.message}. Check that the local server is still running.`, "error");
-    } finally {
-      isScanning = false;
-      overlay.hidden = true;
-      scanButton.disabled = !stream || !serverReady;
+      const denied = error.name === "NotAllowedError" || error.name === "SecurityError";
+      setStatus(denied ? "Camera permission was denied. Allow it in browser settings, then reload." : `Could not start camera: ${error.message}`, "error");
     }
   }
 
   startButton.addEventListener("click", startCamera);
   scanButton.addEventListener("click", scanFrame);
-  window.addEventListener("beforeunload", () => {
-    if (scanTimer) window.clearInterval(scanTimer);
-    stream?.getTracks().forEach((track) => track.stop());
-  });
-  serverStatusPromise = checkServerStatus();
+  window.addEventListener("beforeunload", () => stream?.getTracks().forEach((track) => track.stop()));
+  loadRecognition().catch(modelError);
 })();

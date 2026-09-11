@@ -11,12 +11,13 @@ import base64
 import io
 import json
 import logging
+import os
 import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_from_directory
 
 # Keep the Flask UI alive if its native recognition packages are unavailable,
 # and expose a clear API status instead of allowing an import-time crash.
@@ -48,6 +49,11 @@ DETAILS_FILE = BASE_DIR / "details.json"
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
 app.logger.setLevel(logging.INFO)
+
+# The website uses browser-side recognition.  The legacy Python scanner stays
+# available only when a local operator explicitly opts in with
+# SERVER_SIDE_RECOGNITION=1; this prevents slow native model loading in Vercel.
+SERVER_SIDE_RECOGNITION = os.getenv("SERVER_SIDE_RECOGNITION") == "1"
 
 
 def person_id_from_filename(image_path: Path) -> str:
@@ -81,6 +87,34 @@ def load_details() -> dict[str, dict[str, Any]]:
         for person_id, values in raw_details.items()
         if isinstance(values, dict)
     }
+
+
+def enrolled_profiles() -> list[dict[str, Any]]:
+    """Return the browser-safe enrolment manifest.
+
+    The hosted scanner performs recognition in the visitor's browser. This
+    keeps a live camera frame off the Vercel function and avoids native dlib
+    binaries, which are not available in Vercel's Python runtime.
+    """
+
+    images_by_person: defaultdict[str, list[str]] = defaultdict(list)
+    if KNOWN_FACES_DIR.exists():
+        for image_path in sorted(KNOWN_FACES_DIR.iterdir()):
+            if image_path.is_file() and image_path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:
+                images_by_person[person_id_from_filename(image_path)].append(image_path.name)
+
+    profiles: list[dict[str, Any]] = []
+    for person_id, image_names in images_by_person.items():
+        record = PERSON_DETAILS.get(person_id, {})
+        profiles.append(
+            {
+                "person_id": person_id,
+                "name": record.get("name", person_id),
+                "details": record,
+                "reference_images": [f"/references/{name}" for name in image_names],
+            }
+        )
+    return sorted(profiles, key=lambda profile: str(profile["name"]).lower())
 
 
 def load_known_faces() -> tuple[dict[str, np.ndarray], list[str], dict[str, int]]:
@@ -131,7 +165,11 @@ def load_known_faces() -> tuple[dict[str, np.ndarray], list[str], dict[str, int]
 
 
 PERSON_DETAILS = load_details()
-if FACE_RUNTIME_ERROR:
+if not SERVER_SIDE_RECOGNITION:
+    KNOWN_ENCODINGS = {}
+    STARTUP_WARNINGS = []
+    REFERENCE_COUNTS = {}
+elif FACE_RUNTIME_ERROR:
     KNOWN_ENCODINGS: dict[str, np.ndarray] = {}
     STARTUP_WARNINGS = [
         "Face-recognition runtime is unavailable in this deployment. "
@@ -202,19 +240,19 @@ def estimate_clothes_colour(image_bgr: np.ndarray, location: tuple[int, int, int
 
 @app.get("/")
 def index() -> str:
-    enrolled_profiles = [
-        {
-            "name": PERSON_DETAILS.get(person_id, {}).get("name", person_id),
-            "age": PERSON_DETAILS.get(person_id, {}).get("age", "Not provided"),
-            "reference_count": REFERENCE_COUNTS[person_id],
-        }
-        for person_id in sorted(KNOWN_ENCODINGS)
-    ]
+    profiles = enrolled_profiles()
     return render_template(
         "index.html",
         threshold=FACE_MATCH_THRESHOLD,
-        enrolled_profiles=enrolled_profiles,
+        enrolled_profiles=profiles,
     )
+
+
+@app.get("/references/<path:filename>")
+def reference_image(filename: str) -> Any:
+    """Serve only a file from the enrolled-reference directory."""
+
+    return send_from_directory(KNOWN_FACES_DIR, filename)
 
 
 @app.get("/api/status")
@@ -222,11 +260,12 @@ def status() -> Any:
     """Small diagnostics response used by the UI before a user starts scanning."""
 
     return jsonify(
-        ready=bool(KNOWN_ENCODINGS),
-        enrolled_people=sorted(KNOWN_ENCODINGS),
-        reference_count=len(KNOWN_ENCODINGS),
-        reference_images=sum(REFERENCE_COUNTS.values()),
-        recognition_runtime_ready=FACE_RUNTIME_ERROR is None,
+        ready=bool(enrolled_profiles()),
+        enrolled_people=[profile["person_id"] for profile in enrolled_profiles()],
+        reference_count=len(enrolled_profiles()),
+        reference_images=sum(len(profile["reference_images"]) for profile in enrolled_profiles()),
+        recognition_runtime_ready=True,
+        server_side_recognition=SERVER_SIDE_RECOGNITION and FACE_RUNTIME_ERROR is None,
         warnings=STARTUP_WARNINGS,
         threshold=FACE_MATCH_THRESHOLD,
     )
@@ -245,6 +284,13 @@ def details(person_id: str) -> Any:
 @app.post("/scan")
 def scan() -> Any:
     """Match one browser frame against the startup-loaded reference encodings."""
+
+    if not SERVER_SIDE_RECOGNITION:
+        return jsonify(
+            match=False,
+            reason="browser_recognition",
+            message="This website recognises faces in the browser. Use the web scanner instead of this API.",
+        ), 410
 
     if FACE_RUNTIME_ERROR:
         return jsonify(
@@ -274,8 +320,22 @@ def scan() -> Any:
             message="The image is too dark. Improve the lighting and try again.",
         )
 
-    rgb_image = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+    # Phone cameras may deliver portrait JPEG pixels in a landscape orientation.
+    # Try the four upright orientations so a valid mobile capture is not
+    # rejected simply because its EXIF orientation is not applied by OpenCV.
+    scan_image_bgr = image_bgr
+    rgb_image = cv2.cvtColor(scan_image_bgr, cv2.COLOR_BGR2RGB)
     locations = face_recognition.face_locations(rgb_image, model=FACE_DETECTION_MODEL)
+    if not locations:
+        for rotation in (cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_180, cv2.ROTATE_90_COUNTERCLOCKWISE):
+            candidate_bgr = cv2.rotate(image_bgr, rotation)
+            candidate_rgb = cv2.cvtColor(candidate_bgr, cv2.COLOR_BGR2RGB)
+            candidate_locations = face_recognition.face_locations(candidate_rgb, model=FACE_DETECTION_MODEL)
+            if candidate_locations:
+                scan_image_bgr = candidate_bgr
+                rgb_image = candidate_rgb
+                locations = candidate_locations
+                break
     if not locations:
         return jsonify(
             match=False,
@@ -309,7 +369,7 @@ def scan() -> Any:
                 "confidence": round(max(0.0, (1.0 - best_distance) * 100), 1),
                 "distance": round(best_distance, 4),
                 "location": {"top": top, "right": right, "bottom": bottom, "left": left},
-                "clothes_colour": estimate_clothes_colour(image_bgr, location),
+                "clothes_colour": estimate_clothes_colour(scan_image_bgr, location),
             }
         )
 
