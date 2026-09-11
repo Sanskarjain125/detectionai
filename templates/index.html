@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#111827">
+    <title>Local Face Scanner</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="intro">
+        <p class="eyebrow">Private · Local-only</p>
+        <h1>Face Scanner</h1>
+        <p class="subheading">Use your camera to check a face against your locally stored reference photos.</p>
+      </section>
+
+      <section class="scanner-card" aria-label="Camera scanner">
+        <div class="camera-frame">
+          <video id="camera" autoplay playsinline muted aria-label="Live camera preview"></video>
+          <canvas id="captureCanvas" hidden></canvas>
+          <div id="cameraPlaceholder" class="camera-placeholder">
+            <span class="camera-icon" aria-hidden="true">⌁</span>
+            <p>Camera preview will appear here</p>
+          </div>
+          <div id="scanOverlay" class="scan-overlay" hidden aria-hidden="true">
+            <span class="scanner-line"></span>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button id="startCamera" class="button button-primary" type="button">Start Camera</button>
+          <button id="scanFace" class="button button-secondary" type="button" disabled>Scan Face</button>
+        </div>
+        <p id="statusMessage" class="status-message" role="status" aria-live="polite">Checking local reference faces…</p>
+        <p class="privacy-note">Frames are sent only to this local Flask server at 127.0.0.1.</p>
+      </section>
+
+      <section id="lastScanCard" class="last-scan-card" hidden aria-live="polite">
+        <div>
+          <p class="result-label">Last scanned image</p>
+          <h2>Captured scan result</h2>
+          <p class="last-scan-note">Face labels and arrows are drawn from this captured camera frame.</p>
+        </div>
+        <img id="lastScannedImage" alt="Last scanned camera image with identified face labels and arrows">
+      </section>
+
+      <section id="resultCard" class="result-card" hidden aria-live="polite">
+        <div id="resultIcon" class="result-icon" aria-hidden="true">✓</div>
+        <div>
+          <p id="resultLabel" class="result-label">Recognized face profile</p>
+          <h2 id="resultName"></h2>
+          <p id="confidence" class="confidence"></p>
+          <dl id="detailsList" class="details-list"></dl>
+        </div>
+      </section>
+
+      <section class="dataset-summary" aria-label="Enrolled face dataset summary">
+        <p class="eyebrow">Dataset conclusion</p>
+        <h2>Local face dataset is ready</h2>
+        <p class="dataset-copy">Two identity profiles are locally encoded and matched using the configured distance threshold. The camera frame and personal details stay on this device and its local network.</p>
+        <div class="dataset-grid">
+          {% for profile in enrolled_profiles %}
+          <article class="dataset-person">
+            <h3>{{ profile.name }}</h3>
+            <p>Age: {{ profile.age }}</p>
+            <p>{{ profile.reference_count }} valid reference photo{{ '' if profile.reference_count == 1 else 's' }} encoded</p>
+          </article>
+          {% endfor %}
+        </div>
+        <p class="dataset-footnote">A successful match pauses scanning, preserves the annotated last scan, and shows the recognised profile. Restart Scanning begins a new scan.</p>
+      </section>
+    </main>
+    <script>
+      window.FACE_MATCH_THRESHOLD = {{ threshold|tojson }};
+    </script>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+  </body>
+</html>
