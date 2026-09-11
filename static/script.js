@@ -17,6 +17,7 @@
   let isScanning = false;
   let scanningPaused = false;
   let scanTimer = null;
+  const DETECTION_OPTIONS = new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.35 });
 
   function setStatus(message, kind = "") {
     statusMessage.textContent = message;
@@ -38,7 +39,7 @@
   async function descriptorFromImage(url) {
     const image = await faceapi.fetchImage(url);
     const result = await faceapi
-      .detectSingleFace(image, new faceapi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.35 }))
+      .detectSingleFace(image, DETECTION_OPTIONS)
       .withFaceLandmarks()
       .withFaceDescriptor();
     if (!result) throw new Error(`No clear single face was found in ${url}.`);
@@ -279,7 +280,7 @@
     setStatus("Scanning face in this browser…");
     try {
       const detections = await faceapi
-        .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.35 }))
+        .detectAllFaces(video, DETECTION_OPTIONS)
         .withFaceLandmarks()
         .withFaceDescriptors();
       if (!detections.length) {
@@ -287,6 +288,7 @@
         setStatus("No face detected.", "warning");
         return;
       }
+      setStatus(`${detections.length} face${detections.length === 1 ? "" : "s"} detected. Checking enrolled profile…`);
       const bestMatches = detections.map((detection) => matcher.findBestMatch(detection.descriptor));
       const matchedProfiles = await Promise.all(bestMatches.map((match) =>
         match.label === "unknown" ? null : fetchProfile(match.label)
@@ -342,6 +344,9 @@
       scanButton.disabled = false;
       setStatus("Camera ready. Position one face in good light; scanning starts automatically.");
       scanTimer = window.setInterval(scanFrame, 2500);
+      // Do not make the person wait for the first interval tick. This also
+      // provides an immediate visible status change after Camera On is shown.
+      window.setTimeout(scanFrame, 600);
     } catch (error) {
       const denied = error.name === "NotAllowedError" || error.name === "SecurityError";
       setStatus(denied ? "Camera permission was denied. Allow it in browser settings, then reload." : `Could not start camera: ${error.message}`, "error");
