@@ -20,6 +20,7 @@
   let isScanning = false;
   let serverReady = false;
   let scanningPaused = false;
+  let serverStatusPromise = null;
 
   function setStatus(message, kind = "") {
     statusMessage.textContent = message;
@@ -184,6 +185,9 @@
 
   async function startCamera() {
     clearResult();
+    // The status request begins when the page loads.  Waiting for it here
+    // prevents a fast click on Start Camera from using the initial false value.
+    if (serverStatusPromise) await serverStatusPromise;
     if (!navigator.mediaDevices?.getUserMedia) {
       setStatus("This browser does not support webcam access. Use a current Chrome, Edge, or Firefox browser.", "error");
       return;
@@ -267,5 +271,5 @@
     if (scanTimer) window.clearInterval(scanTimer);
     stream?.getTracks().forEach((track) => track.stop());
   });
-  checkServerStatus();
+  serverStatusPromise = checkServerStatus();
 })();
