@@ -1,7 +1,5 @@
-# Private biometric data and local profile data
-known_faces/*
-!known_faces/.gitkeep
-!known_faces/README.md
+# Profile data remains local. Reference images are deliberately versioned
+# because the repository owner explicitly requested they be uploaded.
 details.json
 
 # Local Python runtime and generated files
