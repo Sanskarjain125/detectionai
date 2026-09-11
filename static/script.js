@@ -11,6 +11,8 @@
   const resultName = document.querySelector("#resultName");
   const confidence = document.querySelector("#confidence");
   const detailsList = document.querySelector("#detailsList");
+  const scanSummary = document.querySelector("#scanSummary");
+  const summaryList = document.querySelector("#summaryList");
   const lastScanCard = document.querySelector("#lastScanCard");
   const lastScannedImage = document.querySelector("#lastScannedImage");
 
@@ -31,6 +33,8 @@
   function clearResult() {
     resultCard.hidden = true;
     detailsList.replaceChildren();
+    summaryList.replaceChildren();
+    scanSummary.hidden = true;
     lastScanCard.hidden = true;
     lastScannedImage.removeAttribute("src");
   }
@@ -73,7 +77,23 @@
     const description = document.createElement("dd");
     term.textContent = label;
     description.textContent = value;
-    detailsList.append(term, description);
+    summaryList.append(term, description);
+  }
+
+  function appendProfileDetails(details, clothesColour) {
+    for (const [key, value] of Object.entries(details || {})) {
+      if (key.toLowerCase() === "name") continue;
+      const term = document.createElement("dt");
+      const description = document.createElement("dd");
+      term.textContent = key.replace(/[_-]/g, " ");
+      description.textContent = String(value);
+      detailsList.append(term, description);
+    }
+    const clothesTerm = document.createElement("dt");
+    const clothesDescription = document.createElement("dd");
+    clothesTerm.textContent = "clothes colour";
+    clothesDescription.textContent = clothesColour === "not visible" ? "Show upper body in camera" : clothesColour;
+    detailsList.append(clothesTerm, clothesDescription);
   }
 
   function rgbToHsv(red, green, blue) {
@@ -201,9 +221,21 @@
     resultName.textContent = profile.name;
     confidence.textContent = `Match confidence: ${Math.max(0, (1 - distance) * 100).toFixed(1)}%`;
     detailsList.replaceChildren();
-    addSummaryLine("Age", profile.details?.age || "Not provided");
-    addSummaryLine("Appearance", profile.details?.head_hair || "Enrolled profile verified");
-    addSummaryLine("Clothes colour", clothesColour === "not visible" ? "Show upper body in camera" : clothesColour);
+    summaryList.replaceChildren();
+    scanSummary.hidden = false;
+    appendProfileDetails(profile.details, clothesColour);
+    addSummaryLine(
+      "Overall",
+      `${profile.details?.age || "Age not provided"} · ${profile.details?.face_shape || "Enrolled profile verified"}`
+    );
+    addSummaryLine(
+      "Appearance",
+      `${profile.details?.head_hair || "Hair details unavailable"}; ${profile.details?.facial_hair || "facial-hair details unavailable"}`
+    );
+    addSummaryLine(
+      "Live scan",
+      `Clothes colour: ${clothesColour === "not visible" ? "show upper body in camera" : clothesColour}`
+    );
   }
 
   function showNoMatch(message) {
@@ -214,6 +246,8 @@
     resultName.textContent = "Face not recognized";
     confidence.textContent = message;
     detailsList.replaceChildren();
+    summaryList.replaceChildren();
+    scanSummary.hidden = true;
   }
 
   async function scanFrame() {
