@@ -3,7 +3,7 @@
   "functions": {
     "app.py": {
       "maxDuration": 60,
-      "excludeFiles": "{.venv/**,.python311/**,android_app/**,known_faces/**,**/__pycache__/**,**/*.pyc}"
+      "excludeFiles": "{.venv/**,.python311/**,android_app/**,**/__pycache__/**,**/*.pyc}"
     }
   }
 }

@@ -1,6 +1,5 @@
-# Profile data remains local. Reference images are deliberately versioned
-# because the repository owner explicitly requested they be uploaded.
-details.json
+# Enrolled reference images and the requested demonstration profiles are
+# versioned because the repository owner explicitly requested cloud hosting.
 
 # Local Python runtime and generated files
 .venv/
