@@ -40,9 +40,12 @@ else:
 
 
 # ---- Recognition settings -------------------------------------------------
-# Lower values are stricter.  0.50 is a conservative threshold for the
-# face_recognition/dlib 128-dimensional embedding distance.
-FACE_MATCH_THRESHOLD = 0.50
+# Lower values are stricter. 0.55 is the browser-model match limit used for
+# normal enrolled-person variation in indoor camera lighting.
+# Browser-side embeddings vary slightly with camera angle and indoor light.
+# 0.55 accepts normal enrolled-person variation while remaining stricter than
+# the face-api.js default of 0.60.
+FACE_MATCH_THRESHOLD = 0.55
 FACE_DETECTION_MODEL = "hog"  # "cnn" is slower and requires a CUDA-capable build.
 MIN_BRIGHTNESS = 20
 MAX_UPLOAD_BYTES = 6 * 1024 * 1024

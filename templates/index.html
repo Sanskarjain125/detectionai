@@ -26,6 +26,7 @@
             <span class="scanner-line"></span>
           </div>
         </div>
+        <p class="camera-hint">Keep your complete face and shoulders visible, about 35–60 cm from the phone. Multiple faces can be scanned together.</p>
 
         <div class="actions">
           <button id="startCamera" class="button button-primary" type="button">Start Camera</button>
@@ -44,19 +45,7 @@
         <img id="lastScannedImage" alt="Last scanned camera image with identified face labels and arrows">
       </section>
 
-      <section id="resultCard" class="result-card" hidden aria-live="polite">
-        <div id="resultIcon" class="result-icon" aria-hidden="true">✓</div>
-        <div>
-          <p id="resultLabel" class="result-label">Recognized face profile</p>
-          <h2 id="resultName"></h2>
-          <p id="confidence" class="confidence"></p>
-          <dl id="detailsList" class="details-list"></dl>
-          <section id="scanSummary" class="scan-summary" aria-label="Quick scan summary">
-            <p class="summary-label">Quick summary</p>
-            <dl id="summaryList" class="details-list summary-list"></dl>
-          </section>
-        </div>
-      </section>
+      <section id="resultCards" class="result-cards" hidden aria-live="polite"></section>
 
     </main>
     <script src="https://unpkg.com/face-api.js@0.22.2/dist/face-api.min.js" defer></script>

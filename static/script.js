@@ -5,14 +5,7 @@
   const placeholder = document.querySelector("#cameraPlaceholder");
   const overlay = document.querySelector("#scanOverlay");
   const statusMessage = document.querySelector("#statusMessage");
-  const resultCard = document.querySelector("#resultCard");
-  const resultIcon = document.querySelector("#resultIcon");
-  const resultLabel = document.querySelector("#resultLabel");
-  const resultName = document.querySelector("#resultName");
-  const confidence = document.querySelector("#confidence");
-  const detailsList = document.querySelector("#detailsList");
-  const scanSummary = document.querySelector("#scanSummary");
-  const summaryList = document.querySelector("#summaryList");
+  const resultCards = document.querySelector("#resultCards");
   const lastScanCard = document.querySelector("#lastScanCard");
   const lastScannedImage = document.querySelector("#lastScannedImage");
 
@@ -31,10 +24,8 @@
   }
 
   function clearResult() {
-    resultCard.hidden = true;
-    detailsList.replaceChildren();
-    summaryList.replaceChildren();
-    scanSummary.hidden = true;
+    resultCards.hidden = true;
+    resultCards.replaceChildren();
     lastScanCard.hidden = true;
     lastScannedImage.removeAttribute("src");
   }
@@ -47,7 +38,7 @@
   async function descriptorFromImage(url) {
     const image = await faceapi.fetchImage(url);
     const result = await faceapi
-      .detectSingleFace(image, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.45 }))
+      .detectSingleFace(image, new faceapi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.35 }))
       .withFaceLandmarks()
       .withFaceDescriptor();
     if (!result) throw new Error(`No clear single face was found in ${url}.`);
@@ -72,28 +63,20 @@
     setStatus(`${profiles.length} enrolled profile(s) ready. Start the camera to scan.`);
   }
 
-  function addSummaryLine(label, value) {
+  function addDetailLine(list, label, value) {
     const term = document.createElement("dt");
     const description = document.createElement("dd");
     term.textContent = label;
     description.textContent = value;
-    summaryList.append(term, description);
+    list.append(term, description);
   }
 
-  function appendProfileDetails(details, clothesColour) {
+  function appendProfileDetails(list, details, clothesColour) {
     for (const [key, value] of Object.entries(details || {})) {
       if (key.toLowerCase() === "name") continue;
-      const term = document.createElement("dt");
-      const description = document.createElement("dd");
-      term.textContent = key.replace(/[_-]/g, " ");
-      description.textContent = String(value);
-      detailsList.append(term, description);
+      addDetailLine(list, key.replace(/[_-]/g, " "), String(value));
     }
-    const clothesTerm = document.createElement("dt");
-    const clothesDescription = document.createElement("dd");
-    clothesTerm.textContent = "clothes colour";
-    clothesDescription.textContent = clothesColour === "not visible" ? "Show upper body in camera" : clothesColour;
-    detailsList.append(clothesTerm, clothesDescription);
+    addDetailLine(list, "clothes colour", clothesColour === "not visible" ? "Show upper body in camera" : clothesColour);
   }
 
   function rgbToHsv(red, green, blue) {
@@ -213,41 +196,74 @@
     scanButton.textContent = "Restart Scanning";
   }
 
-  function showProfile(profile, distance, clothesColour) {
-    resultCard.hidden = false;
-    resultCard.classList.remove("not-recognized");
-    resultIcon.textContent = "✓";
-    resultLabel.textContent = "Recognized face profile";
-    resultName.textContent = profile.name;
+  function createProfileCard(profile, distance, clothesColour, index) {
+    const card = document.createElement("article");
+    card.className = "result-card";
+    const icon = document.createElement("div");
+    icon.className = "result-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = "✓";
+    const content = document.createElement("div");
+    const label = document.createElement("p");
+    label.className = "result-label";
+    label.textContent = `Recognized face ${index + 1}`;
+    const name = document.createElement("h2");
+    name.textContent = profile.name;
+    const confidence = document.createElement("p");
+    confidence.className = "confidence";
     confidence.textContent = `Match confidence: ${Math.max(0, (1 - distance) * 100).toFixed(1)}%`;
-    detailsList.replaceChildren();
-    summaryList.replaceChildren();
-    scanSummary.hidden = false;
-    appendProfileDetails(profile.details, clothesColour);
-    addSummaryLine(
+    const details = document.createElement("dl");
+    details.className = "details-list";
+    appendProfileDetails(details, profile.details, clothesColour);
+    const summary = document.createElement("section");
+    summary.className = "scan-summary";
+    summary.setAttribute("aria-label", `${profile.name} quick scan summary`);
+    const summaryLabel = document.createElement("p");
+    summaryLabel.className = "summary-label";
+    summaryLabel.textContent = "Quick summary";
+    const summaryList = document.createElement("dl");
+    summaryList.className = "details-list summary-list";
+    addDetailLine(
+      summaryList,
       "Overall",
       `${profile.details?.age || "Age not provided"} · ${profile.details?.face_shape || "Enrolled profile verified"}`
     );
-    addSummaryLine(
+    addDetailLine(
+      summaryList,
       "Appearance",
       `${profile.details?.head_hair || "Hair details unavailable"}; ${profile.details?.facial_hair || "facial-hair details unavailable"}`
     );
-    addSummaryLine(
+    addDetailLine(
+      summaryList,
       "Live scan",
       `Clothes colour: ${clothesColour === "not visible" ? "show upper body in camera" : clothesColour}`
     );
+    summary.append(summaryLabel, summaryList);
+    content.append(label, name, confidence, details, summary);
+    card.append(icon, content);
+    return card;
   }
 
   function showNoMatch(message) {
-    resultCard.hidden = false;
-    resultCard.classList.add("not-recognized");
-    resultIcon.textContent = "!";
-    resultLabel.textContent = "Scan result";
-    resultName.textContent = "Face not recognized";
-    confidence.textContent = message;
-    detailsList.replaceChildren();
-    summaryList.replaceChildren();
-    scanSummary.hidden = true;
+    resultCards.hidden = false;
+    const card = document.createElement("article");
+    card.className = "result-card not-recognized";
+    const icon = document.createElement("div");
+    icon.className = "result-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = "!";
+    const content = document.createElement("div");
+    const label = document.createElement("p");
+    label.className = "result-label";
+    label.textContent = "Scan result";
+    const name = document.createElement("h2");
+    name.textContent = "Face not recognized";
+    const description = document.createElement("p");
+    description.className = "confidence";
+    description.textContent = message;
+    content.append(label, name, description);
+    card.append(icon, content);
+    resultCards.replaceChildren(card);
   }
 
   async function scanFrame() {
@@ -263,7 +279,7 @@
     setStatus("Scanning face in this browser…");
     try {
       const detections = await faceapi
-        .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.45 }))
+        .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.35 }))
         .withFaceLandmarks()
         .withFaceDescriptors();
       if (!detections.length) {
@@ -276,11 +292,16 @@
         match.label === "unknown" ? null : fetchProfile(match.label)
       ));
       const clothesColours = captureAnnotatedImage(detections, matchedProfiles);
-      const matchIndex = matchedProfiles.findIndex(Boolean);
-      if (matchIndex !== -1) {
-        showProfile(matchedProfiles[matchIndex], bestMatches[matchIndex].distance, clothesColours[matchIndex]);
+      const recognizedFaces = matchedProfiles
+        .map((profile, index) => profile ? { profile, distance: bestMatches[index].distance, clothesColour: clothesColours[index] } : null)
+        .filter(Boolean);
+      if (recognizedFaces.length) {
+        resultCards.hidden = false;
+        resultCards.replaceChildren(...recognizedFaces.map((face, index) =>
+          createProfileCard(face.profile, face.distance, face.clothesColour, index)
+        ));
         stopAutomaticScanning();
-        setStatus("Face recognized. Scanning is paused; click Restart Scanning for a new scan.");
+        setStatus(`${recognizedFaces.length} face${recognizedFaces.length === 1 ? "" : "s"} recognized. Scanning is paused; click Restart Scanning for a new scan.`);
       } else {
         showNoMatch("This face does not match an enrolled profile.");
         setStatus("Face not recognized.");
@@ -309,7 +330,7 @@
       const compactScreen = window.matchMedia("(max-width: 600px)").matches;
       stream = await navigator.mediaDevices.getUserMedia({
         video: compactScreen
-          ? { facingMode: "user", width: { ideal: 1080 }, height: { ideal: 1920 }, aspectRatio: { ideal: 9 / 16 } }
+          ? { facingMode: "user", width: { ideal: 960 }, height: { ideal: 1280 }, aspectRatio: { ideal: 3 / 4 } }
           : { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
         audio: false
       });

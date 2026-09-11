@@ -76,7 +76,7 @@ The requirements use `dlib-bin==19.24.6`, a pinned prebuilt Windows wheel that p
 
 Click **Start Camera**, approve the browser's camera permission, and look into the preview with only one face visible. The app scans about every 2.5 seconds; **Scan Face** triggers a scan immediately. When a face matches, scanning pauses and the recognised profile remains visible. Click **Restart Scanning** only when you want to clear that result and scan again. A non-match displays **Face not recognized**.
 
-The match threshold is configured by `FACE_MATCH_THRESHOLD = 0.50` near the top of `app.py`. Lower it (for example, `0.45`) to reduce false matches; raise it carefully only if valid matches are repeatedly missed.
+The match threshold is configured by `FACE_MATCH_THRESHOLD = 0.55` near the top of `app.py`. Lower it (for example, `0.50`) to reduce false matches; raise it carefully only if valid matches are repeatedly missed.
 
 ## Troubleshooting
 
