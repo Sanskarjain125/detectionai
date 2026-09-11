@@ -10,7 +10,7 @@
   <body>
     <main class="app-shell">
       <section class="intro">
-        <p class="eyebrow">Private · Local-only</p>
+        <p class="eyebrow">Enrolled face scanner</p>
         <h1>Face Scanner</h1>
         <p class="subheading">Use your camera to check a face against your locally stored reference photos.</p>
       </section>
@@ -33,7 +33,7 @@
           <button id="scanFace" class="button button-secondary" type="button" disabled>Scan Face</button>
         </div>
         <p id="statusMessage" class="status-message" role="status" aria-live="polite">Checking local reference faces…</p>
-        <p class="privacy-note">Frames are sent only to this local Flask server at 127.0.0.1.</p>
+        <p class="privacy-note">Camera frames are sent to this scanner service only to compare them with the enrolled reference photos.</p>
       </section>
 
       <section id="lastScanCard" class="last-scan-card" hidden aria-live="polite">
@@ -57,8 +57,8 @@
 
       <section class="dataset-summary" aria-label="Enrolled face dataset summary">
         <p class="eyebrow">Dataset conclusion</p>
-        <h2>Local face dataset is ready</h2>
-        <p class="dataset-copy">Two identity profiles are locally encoded and matched using the configured distance threshold. The camera frame and personal details stay on this device and its local network.</p>
+        <h2>Enrolled face dataset is ready</h2>
+        <p class="dataset-copy">Two identity profiles are encoded and matched using the configured distance threshold. Camera frames are processed by the scanner service during matching.</p>
         <div class="dataset-grid">
           {% for profile in enrolled_profiles %}
           <article class="dataset-person">

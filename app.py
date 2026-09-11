@@ -1,8 +1,8 @@
-"""Local Flask API for the face scanner application.
+"""Flask API for the face scanner application.
 
-All face encodings and personal details remain on this computer.  Images in
-known_faces are read once when this module is imported, before the web server
-starts accepting scans.
+Reference photos are encoded once when this module is imported, before the
+server begins accepting camera scans. In a hosted deployment, the files and
+camera frames are processed by that deployment's server.
 """
 
 from __future__ import annotations
@@ -18,9 +18,8 @@ from typing import Any
 
 from flask import Flask, jsonify, render_template, request
 
-# Native dlib/OpenCV packages may not be available in a serverless runtime.
-# Keep the Flask UI alive in that situation; the local launcher installs and
-# uses these packages normally.
+# Keep the Flask UI alive if its native recognition packages are unavailable,
+# and expose a clear API status instead of allowing an import-time crash.
 FACE_RUNTIME_ERROR: str | None = None
 try:
     import cv2
@@ -136,7 +135,7 @@ if FACE_RUNTIME_ERROR:
     KNOWN_ENCODINGS: dict[str, np.ndarray] = {}
     STARTUP_WARNINGS = [
         "Face-recognition runtime is unavailable in this deployment. "
-        "Use the local desktop server for enrolled-face scanning."
+        "Check the server's native Python dependencies."
     ]
     REFERENCE_COUNTS: dict[str, int] = {}
 else:
@@ -251,7 +250,7 @@ def scan() -> Any:
         return jsonify(
             match=False,
             reason="recognition_runtime_unavailable",
-            message="Face recognition is available only in the local desktop server for this deployment.",
+            message="Face recognition is unavailable because this server is missing its native Python dependencies.",
         ), 503
 
     if not KNOWN_ENCODINGS:
