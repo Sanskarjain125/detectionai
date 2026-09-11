@@ -18,7 +18,6 @@
       <section class="scanner-card" aria-label="Camera scanner">
         <div class="camera-frame">
           <video id="camera" autoplay playsinline muted aria-label="Live camera preview"></video>
-          <canvas id="captureCanvas" hidden></canvas>
           <div id="cameraPlaceholder" class="camera-placeholder">
             <span class="camera-icon" aria-hidden="true">⌁</span>
             <p>Camera preview will appear here</p>
@@ -55,26 +54,11 @@
         </div>
       </section>
 
-      <section class="dataset-summary" aria-label="Enrolled face dataset summary">
-        <p class="eyebrow">Dataset conclusion</p>
-        <h2>Enrolled face dataset is ready</h2>
-        <p class="dataset-copy">Enrolled profiles are matched in your browser against the configured reference images.</p>
-        <div class="dataset-grid">
-          {% for profile in enrolled_profiles %}
-          <article class="dataset-person">
-            <h3>{{ profile.name }}</h3>
-            <p>Age: {{ profile.details.get('age', 'Not provided') }}</p>
-            <p>{{ profile.reference_images|length }} reference photo{{ '' if profile.reference_images|length == 1 else 's' }} enrolled</p>
-          </article>
-          {% endfor %}
-        </div>
-        <p class="dataset-footnote">A successful match pauses scanning, preserves the annotated last scan, and shows the recognised profile. Restart Scanning begins a new scan.</p>
-      </section>
     </main>
     <script src="https://unpkg.com/face-api.js@0.22.2/dist/face-api.min.js" defer></script>
     <script>
       window.FACE_MATCH_THRESHOLD = {{ threshold|tojson }};
-      window.ENROLLED_PROFILES = {{ enrolled_profiles|tojson }};
+      window.ENROLLED_PROFILES = {{ enrolment_manifest|tojson }};
     </script>
     <script src="{{ url_for('static', filename='script.js') }}" defer></script>
   </body>

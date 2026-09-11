@@ -68,19 +68,91 @@
     setStatus(`${profiles.length} enrolled profile(s) ready. Start the camera to scan.`);
   }
 
-  function appendProfileDetails(details) {
-    for (const [key, value] of Object.entries(details || {})) {
-      if (key.toLowerCase() === "name") continue;
-      const term = document.createElement("dt");
-      const description = document.createElement("dd");
-      term.textContent = key.replace(/[_-]/g, " ");
-      description.textContent = String(value);
-      detailsList.append(term, description);
-    }
+  function addSummaryLine(label, value) {
+    const term = document.createElement("dt");
+    const description = document.createElement("dd");
+    term.textContent = label;
+    description.textContent = value;
+    detailsList.append(term, description);
   }
 
-  function findProfile(personId) {
-    return profiles.find((profile) => profile.person_id === personId);
+  function rgbToHsv(red, green, blue) {
+    const r = red / 255;
+    const g = green / 255;
+    const b = blue / 255;
+    const maximum = Math.max(r, g, b);
+    const minimum = Math.min(r, g, b);
+    const delta = maximum - minimum;
+    let hue = 0;
+    if (delta) {
+      if (maximum === r) hue = ((g - b) / delta) % 6;
+      else if (maximum === g) hue = (b - r) / delta + 2;
+      else hue = (r - g) / delta + 4;
+      hue = (hue * 60 + 360) % 360;
+    }
+    return { hue, saturation: maximum ? delta / maximum : 0, value: maximum };
+  }
+
+  function colourName(hue, saturation, value) {
+    if (value < 0.18) return "black";
+    if (saturation < 0.16) return value > 0.84 ? "white" : "grey";
+    // Dark warm fabric is perceived as brown before it is perceived as orange.
+    if (hue >= 12 && hue < 52 && value < 0.62) return "brown";
+    if (hue < 12 || hue >= 348) return "red";
+    if (hue < 38) return "orange";
+    if (hue < 65) return "yellow";
+    if (hue < 165) return "green";
+    if (hue < 200) return "teal";
+    if (hue < 255) return "blue";
+    if (hue < 292) return "purple";
+    return "pink";
+  }
+
+  function detectClothesColour(context, faceBox, frameWidth, frameHeight) {
+    // Sample the upper torso below the detected face, avoiding skin pixels in
+    // the face itself. A full upper-body preview gives the most reliable label.
+    const left = Math.max(0, Math.floor(faceBox.x - faceBox.width * 0.38));
+    const top = Math.max(0, Math.floor(faceBox.y + faceBox.height * 0.92));
+    const right = Math.min(frameWidth, Math.ceil(faceBox.x + faceBox.width * 1.38));
+    const bottom = Math.min(frameHeight, Math.ceil(faceBox.y + faceBox.height * 2.7));
+    if (right - left < 20 || bottom - top < 20) return "not visible";
+
+    const pixels = context.getImageData(left, top, right - left, bottom - top).data;
+    const hueBins = Array.from({ length: 36 }, () => ({ weight: 0, hue: 0, saturation: 0, value: 0 }));
+    const neutral = { black: 0, white: 0, grey: 0 };
+    for (let index = 0; index < pixels.length; index += 16) {
+      const { hue, saturation, value } = rgbToHsv(pixels[index], pixels[index + 1], pixels[index + 2]);
+      if (value < 0.18) { neutral.black += 1; continue; }
+      if (saturation < 0.16) {
+        neutral[value > 0.84 ? "white" : "grey"] += 1;
+        continue;
+      }
+      const bin = hueBins[Math.min(35, Math.floor(hue / 10))];
+      const weight = saturation * (0.55 + value * 0.45);
+      bin.weight += weight;
+      bin.hue += hue * weight;
+      bin.saturation += saturation * weight;
+      bin.value += value * weight;
+    }
+    const colourful = hueBins.reduce((best, bin) => bin.weight > best.weight ? bin : best, hueBins[0]);
+    const strongestNeutral = Object.entries(neutral).reduce((best, entry) => entry[1] > best[1] ? entry : best, ["grey", 0]);
+    if (!colourful.weight || strongestNeutral[1] > colourful.weight * 2.2) return strongestNeutral[0];
+    return colourName(
+      colourful.hue / colourful.weight,
+      colourful.saturation / colourful.weight,
+      colourful.value / colourful.weight
+    );
+  }
+
+  async function fetchProfile(personId) {
+    const response = await fetch(`/api/details/${encodeURIComponent(personId)}`);
+    if (!response.ok) throw new Error("The recognised profile could not be loaded.");
+    const payload = await response.json();
+    return {
+      person_id: personId,
+      name: payload.details?.name || personId,
+      details: payload.details || {}
+    };
   }
 
   function captureAnnotatedImage(detections, matches) {
@@ -91,10 +163,13 @@
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
     context.lineWidth = Math.max(3, Math.round(canvas.width / 220));
     context.font = `bold ${Math.max(16, Math.round(canvas.width / 32))}px system-ui, sans-serif`;
+    const clothesColours = detections.map((detection) =>
+      detectClothesColour(context, detection.detection.box, canvas.width, canvas.height)
+    );
     detections.forEach((detection, index) => {
       const box = detection.detection.box;
       const matchedProfile = matches[index];
-      const label = matchedProfile ? matchedProfile.name : "Not recognized";
+      const label = matchedProfile ? `${matchedProfile.name} · ${clothesColours[index]}` : "Not recognized";
       const colour = matchedProfile ? "#38e7a3" : "#ff7885";
       context.strokeStyle = colour;
       context.strokeRect(box.x, box.y, box.width, box.height);
@@ -108,6 +183,7 @@
     });
     lastScannedImage.src = canvas.toDataURL("image/jpeg", 0.9);
     lastScanCard.hidden = false;
+    return clothesColours;
   }
 
   function stopAutomaticScanning() {
@@ -117,7 +193,7 @@
     scanButton.textContent = "Restart Scanning";
   }
 
-  function showProfile(profile, distance) {
+  function showProfile(profile, distance, clothesColour) {
     resultCard.hidden = false;
     resultCard.classList.remove("not-recognized");
     resultIcon.textContent = "✓";
@@ -125,7 +201,9 @@
     resultName.textContent = profile.name;
     confidence.textContent = `Match confidence: ${Math.max(0, (1 - distance) * 100).toFixed(1)}%`;
     detailsList.replaceChildren();
-    appendProfileDetails(profile.details);
+    addSummaryLine("Age", profile.details?.age || "Not provided");
+    addSummaryLine("Appearance", profile.details?.head_hair || "Enrolled profile verified");
+    addSummaryLine("Clothes colour", clothesColour === "not visible" ? "Show upper body in camera" : clothesColour);
   }
 
   function showNoMatch(message) {
@@ -160,11 +238,13 @@
         return;
       }
       const bestMatches = detections.map((detection) => matcher.findBestMatch(detection.descriptor));
-      const matchedProfiles = bestMatches.map((match) => match.label === "unknown" ? null : findProfile(match.label));
-      captureAnnotatedImage(detections, matchedProfiles);
+      const matchedProfiles = await Promise.all(bestMatches.map((match) =>
+        match.label === "unknown" ? null : fetchProfile(match.label)
+      ));
+      const clothesColours = captureAnnotatedImage(detections, matchedProfiles);
       const matchIndex = matchedProfiles.findIndex(Boolean);
       if (matchIndex !== -1) {
-        showProfile(matchedProfiles[matchIndex], bestMatches[matchIndex].distance);
+        showProfile(matchedProfiles[matchIndex], bestMatches[matchIndex].distance, clothesColours[matchIndex]);
         stopAutomaticScanning();
         setStatus("Face recognized. Scanning is paused; click Restart Scanning for a new scan.");
       } else {
@@ -192,8 +272,11 @@
       return;
     }
     try {
+      const compactScreen = window.matchMedia("(max-width: 600px)").matches;
       stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: { ideal: 960 }, height: { ideal: 540 } },
+        video: compactScreen
+          ? { facingMode: "user", width: { ideal: 1080 }, height: { ideal: 1920 }, aspectRatio: { ideal: 9 / 16 } }
+          : { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
         audio: false
       });
       video.srcObject = stream;

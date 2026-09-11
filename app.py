@@ -7,11 +7,11 @@ camera frames are processed by that deployment's server.
 
 from __future__ import annotations
 
+import os
 import base64
 import io
 import json
 import logging
-import os
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -19,18 +19,24 @@ from typing import Any
 
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
-# Keep the Flask UI alive if its native recognition packages are unavailable,
-# and expose a clear API status instead of allowing an import-time crash.
+# The deployed website does not need dlib/OpenCV. Loading those native modules
+# only for the legacy opt-in scanner makes normal website startup much faster.
+SERVER_SIDE_RECOGNITION = os.getenv("SERVER_SIDE_RECOGNITION") == "1"
 FACE_RUNTIME_ERROR: str | None = None
-try:
-    import cv2
-    import face_recognition
-    import numpy as np
-except Exception as error:  # Includes missing native libraries during cloud import.
+if SERVER_SIDE_RECOGNITION:
+    try:
+        import cv2
+        import face_recognition
+        import numpy as np
+    except Exception as error:  # Includes missing native libraries during cloud import.
+        cv2 = None
+        face_recognition = None
+        np = None
+        FACE_RUNTIME_ERROR = str(error)
+else:
     cv2 = None
     face_recognition = None
     np = None
-    FACE_RUNTIME_ERROR = str(error)
 
 
 # ---- Recognition settings -------------------------------------------------
@@ -49,12 +55,6 @@ DETAILS_FILE = BASE_DIR / "details.json"
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
 app.logger.setLevel(logging.INFO)
-
-# The website uses browser-side recognition.  The legacy Python scanner stays
-# available only when a local operator explicitly opts in with
-# SERVER_SIDE_RECOGNITION=1; this prevents slow native model loading in Vercel.
-SERVER_SIDE_RECOGNITION = os.getenv("SERVER_SIDE_RECOGNITION") == "1"
-
 
 def person_id_from_filename(image_path: Path) -> str:
     """Map person1_1.jpg and person1_2.jpg to the person id ``person1``.
@@ -241,10 +241,17 @@ def estimate_clothes_colour(image_bgr: np.ndarray, location: tuple[int, int, int
 @app.get("/")
 def index() -> str:
     profiles = enrolled_profiles()
+    enrolment_manifest = [
+        {
+            "person_id": profile["person_id"],
+            "reference_images": profile["reference_images"],
+        }
+        for profile in profiles
+    ]
     return render_template(
         "index.html",
         threshold=FACE_MATCH_THRESHOLD,
-        enrolled_profiles=profiles,
+        enrolment_manifest=enrolment_manifest,
     )
 
 
