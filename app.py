@@ -16,10 +16,21 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-import cv2
-import face_recognition
-import numpy as np
 from flask import Flask, jsonify, render_template, request
+
+# Native dlib/OpenCV packages may not be available in a serverless runtime.
+# Keep the Flask UI alive in that situation; the local launcher installs and
+# uses these packages normally.
+FACE_RUNTIME_ERROR: str | None = None
+try:
+    import cv2
+    import face_recognition
+    import numpy as np
+except Exception as error:  # Includes missing native libraries during cloud import.
+    cv2 = None
+    face_recognition = None
+    np = None
+    FACE_RUNTIME_ERROR = str(error)
 
 
 # ---- Recognition settings -------------------------------------------------
@@ -121,7 +132,15 @@ def load_known_faces() -> tuple[dict[str, np.ndarray], list[str], dict[str, int]
 
 
 PERSON_DETAILS = load_details()
-KNOWN_ENCODINGS, STARTUP_WARNINGS, REFERENCE_COUNTS = load_known_faces()
+if FACE_RUNTIME_ERROR:
+    KNOWN_ENCODINGS: dict[str, np.ndarray] = {}
+    STARTUP_WARNINGS = [
+        "Face-recognition runtime is unavailable in this deployment. "
+        "Use the local desktop server for enrolled-face scanning."
+    ]
+    REFERENCE_COUNTS: dict[str, int] = {}
+else:
+    KNOWN_ENCODINGS, STARTUP_WARNINGS, REFERENCE_COUNTS = load_known_faces()
 
 
 def decode_frame(payload: str) -> np.ndarray:
@@ -208,6 +227,7 @@ def status() -> Any:
         enrolled_people=sorted(KNOWN_ENCODINGS),
         reference_count=len(KNOWN_ENCODINGS),
         reference_images=sum(REFERENCE_COUNTS.values()),
+        recognition_runtime_ready=FACE_RUNTIME_ERROR is None,
         warnings=STARTUP_WARNINGS,
         threshold=FACE_MATCH_THRESHOLD,
     )
@@ -226,6 +246,13 @@ def details(person_id: str) -> Any:
 @app.post("/scan")
 def scan() -> Any:
     """Match one browser frame against the startup-loaded reference encodings."""
+
+    if FACE_RUNTIME_ERROR:
+        return jsonify(
+            match=False,
+            reason="recognition_runtime_unavailable",
+            message="Face recognition is available only in the local desktop server for this deployment.",
+        ), 503
 
     if not KNOWN_ENCODINGS:
         return jsonify(

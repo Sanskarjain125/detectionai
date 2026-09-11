@@ -23,7 +23,7 @@ def ensure_dependencies() -> None:
 
     if needs_base_packages:
         print("Installing local face-scanner dependencies…")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.local.txt"])
     if needs_face_recognition:
         print("Installing face-recognition…")
         subprocess.check_call([

@@ -1,7 +1,6 @@
-# Dependencies are listed explicitly because face-recognition normally asks
-# pip to build dlib from C++ source on Windows. dlib-bin supplies the same
-# importable dlib 19.24.6 runtime as a prebuilt CPython wheel. The launcher
-# installs face-recognition itself with --no-deps after these packages.
+# Lightweight Vercel serverless dependencies. The dlib/OpenCV recognition
+# stack is intentionally in requirements.local.txt because it runs locally
+# with the private enrolled photos rather than in the cloud function.
 Flask==3.0.3
 Werkzeug==3.0.3
 Jinja2==3.1.6
@@ -9,9 +8,3 @@ MarkupSafe==3.0.3
 click==8.5.0
 blinker==1.9.0
 itsdangerous==2.2.0
-setuptools==70.3.0
-numpy==1.26.4
-opencv-python==4.10.0.84
-Pillow==10.4.0
-face-recognition-models==0.3.0
-dlib-bin==19.24.6

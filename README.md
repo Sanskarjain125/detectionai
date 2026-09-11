@@ -16,7 +16,7 @@ Open PowerShell in this `face_scanner` folder and run:
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip setuptools wheel
-pip install -r requirements.txt
+pip install -r requirements.local.txt
 python run.py
 ```
 
@@ -89,6 +89,6 @@ Face recognition is probabilistic. Use it only with the knowledge and permission
 
 ## Vercel deployment
 
-The repository includes `vercel.json`, `.python-version`, and `build.py` to prevent Vercel's Python Function from crashing while importing `face_recognition`. Vercel imports `app.py` directly (it does not run `run.py`), so the build hook installs `face-recognition` against the pinned prebuilt dlib runtime.
+The repository includes `vercel.json` and `.python-version` so the Flask interface can deploy as a lightweight Vercel Function. Vercel imports `app.py` directly (it does not run `run.py`), and the app now handles unavailable native recognition packages without crashing the function.
 
 For privacy, Git intentionally excludes `known_faces/` photos and the real `details.json`. Therefore, the Vercel page can load successfully but has no enrolled face dataset. Keep face recognition on the local server unless you deliberately choose an approved, secure biometric-data store and deployment process.
