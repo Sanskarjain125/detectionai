@@ -30,5 +30,31 @@
     "facial_hair": "Neatly trimmed beard and moustache",
     "ears": "Average-sized ears, visible in the reference photos",
     "scan_note": "This appearance profile is shown only after Deepak Sharma's enrolled face is recognised."
+  },
+  "objects": {
+    "accordion": {
+      "name": "Accordion",
+      "summary": "A compact, foldable musical instrument with a front-facing keyboard and bellows designed for portable performance.",
+      "best_for": "Music practice, folk performance, and portable live playing",
+      "key_features": "Pleated bellows, piano-style keys, grille, shoulder straps, and a compact folding body"
+    },
+    "adapter": {
+      "name": "Power Adapter",
+      "summary": "A mains power adapter with a coiled cable and connector, photographed from multiple angles for shape and component reference.",
+      "best_for": "Powering compatible electronics and identifying cable or connector orientation",
+      "key_features": "Power brick, insulated cable, connector tip, cable loops, and rear label area"
+    },
+    "air_conditioner": {
+      "name": "Air Conditioner",
+      "summary": "A wall-mounted split air-conditioner unit with a clean front panel, airflow outlet, and side depth visible in the reference views.",
+      "best_for": "Cooling indoor rooms and maintaining a more comfortable temperature",
+      "key_features": "Front intake panel, display window, lower air outlet, side vents, and remote-controlled format"
+    },
+    "office_chair": {
+      "name": "Office Chair",
+      "summary": "An ergonomic rolling office chair with a padded backrest, seat cushion, arm supports, and a five-wheel base.",
+      "best_for": "Desk work, study sessions, and adjustable seated support",
+      "key_features": "Padded backrest, contoured seat, armrests, central lift column, and caster base"
+    }
   }
 }

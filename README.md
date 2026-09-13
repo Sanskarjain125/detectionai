@@ -8,7 +8,7 @@ The native Python scanner and `android_app/` are retained only as local-developm
 
 - Python 3.10 or 3.11 (64-bit is recommended).
 - A working webcam and a current Chrome, Edge, or Firefox browser.
-- Five or six clear reference photos of each person you want to recognise. This project deliberately ships without anyone's face photos.
+- Five or six clear reference photos of each person you want to recognise. This requested deployment includes the enrolled face references and a separate object image catalogue.
 
 ## First-time installation
 
@@ -44,7 +44,7 @@ The requirements use `dlib-bin==19.24.6`, a pinned prebuilt Windows wheel that p
 
 ## Enrol reference faces
 
-1. For a new clone, copy `details.example.json` to `details.json`, then enter your own local profile details. `details.json` and `known_faces/` are intentionally excluded from Git because they can contain personal and biometric data.
+1. For a new clone, copy `details.example.json` to `details.json`, then enter your own local profile details. This repository currently versions `details.json` and `known_faces/` because the requested hosted demo needs them; treat those files as personal and biometric data.
 2. Put your images in `known_faces/`. Each image must contain exactly one, clear, forward-facing face. Good lighting and slight angle/expression changes across photos improve reliability.
 3. Name all photos for a person with the same id followed by a sequence number. For example:
 
@@ -72,6 +72,10 @@ The requirements use `dlib-bin==19.24.6`, a pinned prebuilt Windows wheel that p
 
 5. Restart `python run.py` after changing either reference images or `details.json`. Reference encodings are intentionally loaded once on startup for speed and consistency.
 
+## Object image catalogue
+
+The supplied object references live in `object_images/`, grouped into `Accordion`, `Adapter`, `Air_Conditioner`, and `Office_Chair`. They are displayed in the catalogue below the scanner and are intentionally kept separate from `known_faces/`, because they are object photos rather than face references. Their summaries are stored in the `objects` section of `details.json`.
+
 ## Use the scanner
 
 Click **Start Camera**, approve the browser's camera permission, and look into the preview with only one face visible. The app scans about every 2.5 seconds; **Scan Face** triggers a scan immediately. When a face matches, scanning pauses and the recognised profile remains visible. Click **Restart Scanning** only when you want to clear that result and scan again. A non-match displays **Face not recognized**.
@@ -94,5 +98,14 @@ Face recognition is probabilistic. Use it only with the knowledge and permission
 ## Vercel deployment
 
 The repository includes `vercel.json` and `.python-version` for a lightweight Flask Function. Vercel imports `app.py` directly; it does not run `run.py`. The deployed browser downloads the recognition model, encodes the enrolled reference images, and matches the camera feed locally in the browser. This works without Vercel-native dlib packages.
+
+### Result-email setup
+
+Each recognised profile card includes a **Send result by email** button. The server sends only to the fixed enrolled-profile addresses configured in `app.py`; the browser cannot choose a recipient or access a mail credential. To enable delivery on Vercel, configure these production environment variables and redeploy:
+
+- `RESEND_API_KEY` — an API key created in your Resend account.
+- `RESEND_FROM_EMAIL` — a verified Resend sender, for example `Face Scanner <scanner@your-domain.com>`.
+
+Without these variables, the button safely explains that email delivery is not configured and no scan data is sent.
 
 `known_faces/` and `details.json` are currently versioned and therefore will be deployed with the site. Confirm that every enrolled person has explicitly agreed to this before making the repository or Vercel project public. Use a private GitHub repository and Vercel access controls if the data is not intended for public access.

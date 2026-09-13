@@ -14,8 +14,12 @@ import json
 import logging
 import re
 from collections import defaultdict
+from datetime import datetime, timezone
+from html import escape
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
@@ -53,7 +57,16 @@ SUPPORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
 BASE_DIR = Path(__file__).resolve().parent
 KNOWN_FACES_DIR = BASE_DIR / "known_faces"
+OBJECT_IMAGES_DIR = BASE_DIR / "object_images"
 DETAILS_FILE = BASE_DIR / "details.json"
+
+# A recognised result can only be emailed to the matching enrolled person.
+# The browser never receives an API key or chooses the destination address.
+RESULT_EMAIL_RECIPIENTS = {
+    "person1": "sanskarjain@appicsoftwares.in",
+    "deepak_sharma": "deepak.sharma@happiest.team",
+}
+RESEND_API_URL = "https://api.resend.com/emails"
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
@@ -118,6 +131,31 @@ def enrolled_profiles() -> list[dict[str, Any]]:
             }
         )
     return sorted(profiles, key=lambda profile: str(profile["name"]).lower())
+
+
+def object_catalogue() -> list[dict[str, Any]]:
+    """Build a browser-safe catalogue for the supplied non-face reference images."""
+
+    catalogue_details = PERSON_DETAILS.get("objects", {})
+    catalogue: list[dict[str, Any]] = []
+    if not OBJECT_IMAGES_DIR.exists():
+        return catalogue
+    for category_dir in sorted(OBJECT_IMAGES_DIR.iterdir()):
+        if not category_dir.is_dir():
+            continue
+        category_id = category_dir.name.lower()
+        record = catalogue_details.get(category_id, {})
+        images = [
+            {
+                "url": f"/object-images/{category_dir.name}/{image_path.name}",
+                "alt": f"{record.get('name', category_dir.name)} - {image_path.stem.replace('_', ' ')}",
+            }
+            for image_path in sorted(category_dir.iterdir())
+            if image_path.is_file() and image_path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS
+        ]
+        if images:
+            catalogue.append({"category_id": category_id, "images": images, **record})
+    return catalogue
 
 
 def load_known_faces() -> tuple[dict[str, np.ndarray], list[str], dict[str, int]]:
@@ -255,6 +293,7 @@ def index() -> str:
         "index.html",
         threshold=FACE_MATCH_THRESHOLD,
         enrolment_manifest=enrolment_manifest,
+        object_catalogue=object_catalogue(),
     )
 
 
@@ -263,6 +302,14 @@ def reference_image(filename: str) -> Any:
     """Serve only a file from the enrolled-reference directory."""
 
     return send_from_directory(KNOWN_FACES_DIR, filename)
+
+
+@app.get("/object-images/<category>/<path:filename>")
+def object_image(category: str, filename: str) -> Any:
+    """Serve only catalogue images from their category directory."""
+
+    category_dir = OBJECT_IMAGES_DIR / category
+    return send_from_directory(category_dir, filename)
 
 
 @app.get("/api/status")
@@ -289,6 +336,93 @@ def details(person_id: str) -> Any:
     if record is None:
         return jsonify(error="No details record exists for this recognised face."), 404
     return jsonify(person_id=person_id, details=record)
+
+
+def scan_result_email_html(
+    name: str,
+    details: dict[str, Any],
+    clothes_colour: str,
+    confidence: float,
+    sent_at: str,
+) -> str:
+    """Create a minimal escaped email with the server-side enrolled details."""
+
+    detail_rows = "".join(
+        f"<tr><td style='padding:7px 12px;border-bottom:1px solid #e5e7eb;color:#475569'><strong>{escape(key.replace('_', ' ').title())}</strong></td>"
+        f"<td style='padding:7px 12px;border-bottom:1px solid #e5e7eb'>{escape(str(value))}</td></tr>"
+        for key, value in details.items()
+        if key != "name"
+    )
+    detail_rows += (
+        "<tr><td style='padding:7px 12px;border-bottom:1px solid #e5e7eb;color:#475569'><strong>Clothes colour</strong></td>"
+        f"<td style='padding:7px 12px;border-bottom:1px solid #e5e7eb'>{escape(clothes_colour)}</td></tr>"
+    )
+    return f"""<!doctype html>
+<html><body style='margin:0;background:#f8fafc;font-family:Arial,sans-serif;color:#172033'>
+  <main style='max-width:640px;margin:24px auto;padding:28px;background:#ffffff;border-radius:14px'>
+    <p style='margin:0 0 8px;color:#315cc8;font-weight:700;letter-spacing:.08em;text-transform:uppercase'>Face Scanner</p>
+    <h1 style='margin:0 0 12px;font-size:24px'>Scan result for {escape(name)}</h1>
+    <p style='line-height:1.55'>Your enrolled face was recognised in a live camera scan. Match confidence: <strong>{confidence:.1f}%</strong>.</p>
+    <table style='width:100%;border-collapse:collapse;font-size:14px'>{detail_rows}</table>
+    <p style='margin:20px 0 0;color:#64748b;font-size:12px'>Sent from the enrolled face scanner at {escape(sent_at)} UTC.</p>
+  </main>
+</body></html>"""
+
+
+@app.post("/api/send-result/<person_id>")
+def send_result(person_id: str) -> Any:
+    """Email one recognised person's stored profile to their fixed email address."""
+
+    recipient = RESULT_EMAIL_RECIPIENTS.get(person_id)
+    record = PERSON_DETAILS.get(person_id)
+    if not recipient or not record:
+        return jsonify(error="This recognised profile has no configured result email."), 404
+
+    resend_api_key = os.getenv("RESEND_API_KEY")
+    from_email = os.getenv("RESEND_FROM_EMAIL")
+    if not resend_api_key or not from_email:
+        return jsonify(
+            error="Email sending is not configured. Add RESEND_API_KEY and RESEND_FROM_EMAIL in Vercel, then redeploy."
+        ), 503
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        confidence = min(100.0, max(0.0, float(payload.get("match_confidence", 0))))
+    except (TypeError, ValueError):
+        return jsonify(error="Match confidence must be a number."), 400
+    clothes_colour = str(payload.get("clothes_colour", "not visible")).strip()[:80] or "not visible"
+    name = str(record.get("name", person_id))
+    sent_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    email_payload = {
+        "from": from_email,
+        "to": [recipient],
+        "subject": f"Face Scanner result — {name}",
+        "html": scan_result_email_html(name, record, clothes_colour, confidence, sent_at),
+        "text": (
+            f"Face Scanner result for {name}\n\n"
+            f"Match confidence: {confidence:.1f}%\n"
+            f"Clothes colour: {clothes_colour}\n\n"
+            + "\n".join(f"{key.replace('_', ' ').title()}: {value}" for key, value in record.items() if key != "name")
+            + f"\n\nSent at {sent_at} UTC."
+        ),
+    }
+    provider_request = Request(
+        RESEND_API_URL,
+        data=json.dumps(email_payload).encode("utf-8"),
+        headers={"Authorization": f"Bearer {resend_api_key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(provider_request, timeout=12) as response:
+            provider_response = json.loads(response.read().decode("utf-8") or "{}")
+    except HTTPError as error:
+        app.logger.warning("Email provider rejected result email for %s: %s", person_id, error.code)
+        return jsonify(error="The email service rejected this send. Check the Resend sender domain and API key."), 502
+    except (URLError, OSError, json.JSONDecodeError) as error:
+        app.logger.error("Could not send result email for %s: %s", person_id, error)
+        return jsonify(error="The email service could not be reached. Please try again."), 503
+
+    return jsonify(sent=True, recipient=recipient, email_id=provider_response.get("id"))
 
 
 @app.post("/scan")

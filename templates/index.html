@@ -60,6 +60,40 @@
 
       <section id="resultCards" class="result-cards" hidden aria-live="polite"></section>
 
+      <section class="object-catalogue" aria-labelledby="object-catalogue-title">
+        <div class="catalogue-heading">
+          <p class="eyebrow">Reference catalogue</p>
+          <h2 id="object-catalogue-title">Object image library</h2>
+          <p class="catalogue-intro">Browse every supplied reference view with a practical identification summary.</p>
+        </div>
+        <div class="object-grid">
+          {% for object in object_catalogue %}
+          <article class="object-card">
+            <div class="object-card-header">
+              <div>
+                <p class="result-label">{{ object.category_id|replace('_', ' ') }}</p>
+                <h3>{{ object.name }}</h3>
+              </div>
+              <span class="image-count">{{ object.images|length }} views</span>
+            </div>
+            <p class="object-summary">{{ object.summary }}</p>
+            <dl class="details-list object-details">
+              <dt>Best for</dt><dd>{{ object.best_for }}</dd>
+              <dt>Key features</dt><dd>{{ object.key_features }}</dd>
+            </dl>
+            <div class="object-images">
+              {% for image in object.images %}
+              <figure>
+                <img src="{{ image.url }}" alt="{{ image.alt }}" loading="lazy">
+                <figcaption>{{ loop.index }}. {{ image.alt.split(' - ', 1)[1] }}</figcaption>
+              </figure>
+              {% endfor %}
+            </div>
+          </article>
+          {% endfor %}
+        </div>
+      </section>
+
     </main>
     <script src="https://unpkg.com/face-api.js@0.22.2/dist/face-api.min.js" defer></script>
     <script>

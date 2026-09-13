@@ -128,6 +128,30 @@
     addDetailLine(list, "clothes colour", clothesColour === "not visible" ? "Show upper body in camera" : clothesColour);
   }
 
+  async function sendProfileResult(profile, distance, clothesColour, button) {
+    button.disabled = true;
+    button.textContent = "Sending result…";
+    try {
+      const response = await fetch(`/api/send-result/${encodeURIComponent(profile.person_id)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          match_confidence: Math.max(0, (1 - distance) * 100),
+          clothes_colour: clothesColour
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.sent) throw new Error(payload.error || "Email could not be sent.");
+      button.classList.add("sent");
+      button.textContent = "Result sent ✓";
+      setStatus(`${profile.name}'s scan details were sent to ${payload.recipient}.`);
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = "Send result by email";
+      setStatus(error.message || "Email could not be sent. Please try again.", "error");
+    }
+  }
+
   function rgbToHsv(red, green, blue) {
     const r = red / 255;
     const g = green / 255;
@@ -294,9 +318,15 @@
       `Clothes colour: ${clothesColour === "not visible" ? "show upper body in camera" : clothesColour}`
     );
     summary.append(summaryLabel, summaryList);
+    const sendButton = document.createElement("button");
+    sendButton.className = "button send-result-button";
+    sendButton.type = "button";
+    sendButton.textContent = "Send result by email";
+    sendButton.setAttribute("aria-label", `Send ${profile.name}'s scan result by email`);
+    sendButton.addEventListener("click", () => sendProfileResult(profile, distance, clothesColour, sendButton));
     content.append(label, name, confidence);
     if (sourceNote) content.append(source);
-    content.append(details, summary);
+    content.append(details, summary, sendButton);
     if (snapshotUrl) {
       const snapshot = document.createElement("img");
       snapshot.className = "profile-snapshot";
