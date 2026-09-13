@@ -158,6 +158,20 @@ def object_catalogue() -> list[dict[str, Any]]:
     return catalogue
 
 
+def object_manifest() -> list[dict[str, Any]]:
+    """Return the compact object reference manifest used by the browser matcher."""
+
+    return [
+        {
+            "category_id": item["category_id"],
+            "name": item.get("name", item["category_id"]),
+            "summary": item.get("summary", ""),
+            "reference_images": [image["url"] for image in item["images"]],
+        }
+        for item in object_catalogue()
+    ]
+
+
 def load_known_faces() -> tuple[dict[str, np.ndarray], list[str], dict[str, int]]:
     """Create one average encoding per person from their reference photos."""
 
@@ -294,6 +308,7 @@ def index() -> str:
         threshold=FACE_MATCH_THRESHOLD,
         enrolment_manifest=enrolment_manifest,
         object_catalogue=object_catalogue(),
+        object_manifest=object_manifest(),
     )
 
 

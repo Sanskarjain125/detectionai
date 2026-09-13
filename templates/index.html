@@ -96,9 +96,11 @@
 
     </main>
     <script src="https://unpkg.com/face-api.js@0.22.2/dist/face-api.min.js" defer></script>
+    <script src="https://docs.opencv.org/4.x/opencv.js" defer></script>
     <script>
       window.FACE_MATCH_THRESHOLD = {{ threshold|tojson }};
       window.ENROLLED_PROFILES = {{ enrolment_manifest|tojson }};
+      window.OBJECT_MANIFEST = {{ object_manifest|tojson }};
     </script>
     <script src="{{ url_for('static', filename='script.js') }}" defer></script>
   </body>

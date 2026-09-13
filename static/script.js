@@ -15,9 +15,12 @@
 
   const MODEL_URL = "https://justadudewhohacks.github.io/face-api.js/models";
   const profiles = Array.isArray(window.ENROLLED_PROFILES) ? window.ENROLLED_PROFILES : [];
+  const objectManifest = Array.isArray(window.OBJECT_MANIFEST) ? window.OBJECT_MANIFEST : [];
   const threshold = Number(window.FACE_MATCH_THRESHOLD || 0.5);
   let stream = null;
   let matcher = null;
+  let objectReferences = [];
+  let objectMatcherReady = false;
   let isScanning = false;
   let scanningPaused = false;
   let scanTimer = null;
@@ -81,6 +84,121 @@
   function modelError(error) {
     console.error("Face recognition setup failed", error);
     setStatus("Recognition model could not load. Check your internet connection, then reload this page.", "error");
+  }
+
+  function waitForOpenCv() {
+    return new Promise((resolve, reject) => {
+      const startedAt = Date.now();
+      const check = () => {
+        if (window.cv?.Mat && window.cv?.ORB) {
+          if (window.cv.Mat.ones) return resolve(window.cv);
+          window.cv.onRuntimeInitialized = () => resolve(window.cv);
+          return;
+        }
+        if (Date.now() - startedAt > 15000) {
+          reject(new Error("Object recognition engine could not load."));
+          return;
+        }
+        window.setTimeout(check, 100);
+      };
+      check();
+    });
+  }
+
+  function imageElement(url) {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error(`Reference image could not load: ${url}`));
+      image.src = url;
+    });
+  }
+
+  async function loadObjectRecognition() {
+    if (!objectManifest.length) return;
+    const cv = await waitForOpenCv();
+    const orb = cv.ORB.create(900);
+    const references = [];
+    for (const object of objectManifest) {
+      for (const url of object.reference_images) {
+        const image = await imageElement(url);
+        const source = cv.imread(image);
+        const gray = new cv.Mat();
+        const keypoints = new cv.KeyPointVector();
+        const descriptors = new cv.Mat();
+        cv.cvtColor(source, gray, cv.COLOR_RGBA2GRAY);
+        orb.detectAndCompute(gray, new cv.Mat(), keypoints, descriptors);
+        if (!descriptors.empty()) {
+          references.push({ object, url, descriptors });
+        } else {
+          descriptors.delete();
+        }
+        source.delete();
+        gray.delete();
+        keypoints.delete();
+      }
+    }
+    objectReferences = references;
+    objectMatcherReady = objectReferences.length > 0;
+  }
+
+  function detectObject(source) {
+    if (!objectMatcherReady) return null;
+    const cv = window.cv;
+    const frame = cv.imread(source);
+    const gray = new cv.Mat();
+    const keypoints = new cv.KeyPointVector();
+    const descriptors = new cv.Mat();
+    const orb = cv.ORB.create(900);
+    cv.cvtColor(frame, gray, cv.COLOR_RGBA2GRAY);
+    orb.detectAndCompute(gray, new cv.Mat(), keypoints, descriptors);
+    let best = null;
+    if (!descriptors.empty()) {
+      for (const reference of objectReferences) {
+        const matcher = new cv.BFMatcher(cv.NORM_HAMMING, false);
+        const matches = new cv.DMatchVector();
+        matcher.match(descriptors, reference.descriptors, matches);
+        let goodMatches = 0;
+        for (let index = 0; index < matches.size(); index += 1) {
+          if (matches.get(index).distance < 62) goodMatches += 1;
+        }
+        if (!best || goodMatches > best.goodMatches) {
+          best = { object: reference.object, goodMatches, referenceUrl: reference.url };
+        }
+        matches.delete();
+        matcher.delete();
+      }
+    }
+    frame.delete();
+    gray.delete();
+    keypoints.delete();
+    descriptors.delete();
+    if (!best || best.goodMatches < 16) return null;
+    return { ...best, score: Math.min(99, Math.round(55 + best.goodMatches * 1.8)) };
+  }
+
+  function createObjectCard(match) {
+    const card = document.createElement("article");
+    card.className = "result-card object-match-card";
+    const icon = document.createElement("div");
+    icon.className = "result-icon object-result-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = "O";
+    const content = document.createElement("div");
+    const label = document.createElement("p");
+    label.className = "result-label";
+    label.textContent = "Object recognized";
+    const name = document.createElement("h2");
+    name.textContent = match.object.name;
+    const confidence = document.createElement("p");
+    confidence.className = "confidence";
+    confidence.textContent = `Reference match: ${match.score}%`;
+    const summary = document.createElement("p");
+    summary.className = "source-note";
+    summary.textContent = match.object.summary;
+    content.append(label, name, confidence, summary);
+    card.append(icon, content);
+    return card;
   }
 
   async function descriptorFromImage(url) {
@@ -394,17 +512,25 @@
       clearResult();
       scanButton.textContent = "Scan Face";
     }
-    if (isScanning || !stream || !matcher) return;
+    if (isScanning || !stream || (!matcher && !objectMatcherReady)) return;
     isScanning = true;
     scanButton.disabled = true;
     overlay.hidden = false;
-    setStatus("Scanning face in this browser…");
+    setStatus("Scanning face and objects in this browser…");
     try {
+      const objectMatch = detectObject(video);
       const detections = await faceapi
         .detectAllFaces(video, DETECTION_OPTIONS)
         .withFaceLandmarks()
         .withFaceDescriptors();
       if (!detections.length) {
+        if (objectMatch) {
+          resultCards.hidden = false;
+          resultCards.replaceChildren(createObjectCard(objectMatch));
+          stopAutomaticScanning();
+          setStatus(`${objectMatch.object.name} recognized from the uploaded reference images.`);
+          return;
+        }
         if (recording) {
           setStatus("Recording video… no face is visible in this frame.", "warning");
         } else {
@@ -429,11 +555,13 @@
         setStatus(`Recording video… ${count} enrolled face${count === 1 ? "" : "s"} identified so far.`);
       } else if (recognizedFaces.length) {
         resultCards.hidden = false;
-        resultCards.replaceChildren(...recognizedFaces.map((face, index) =>
+        const cards = recognizedFaces.map((face, index) =>
           createProfileCard(face.profile, face.distance, face.clothesColour, index)
-        ));
+        );
+        if (objectMatch) cards.unshift(createObjectCard(objectMatch));
+        resultCards.replaceChildren(...cards);
         stopAutomaticScanning();
-        setStatus(`${recognizedFaces.length} face${recognizedFaces.length === 1 ? "" : "s"} recognized. Scanning is paused; click Restart Scanning for a new scan.`);
+        setStatus(`${recognizedFaces.length} face${recognizedFaces.length === 1 ? "" : "s"}${objectMatch ? ` and ${objectMatch.object.name}` : ""} recognized. Scanning is paused; click Restart Scanning for a new scan.`);
       } else {
         if (recording) {
           setStatus("Recording video… face found, but it is not an enrolled profile.", "warning");
@@ -448,7 +576,7 @@
     } finally {
       isScanning = false;
       overlay.hidden = true;
-      scanButton.disabled = !stream || !matcher;
+      scanButton.disabled = !stream || (!matcher && !objectMatcherReady);
     }
   }
 
@@ -577,5 +705,5 @@
     stopCameraStream();
     if (recordingUrl) URL.revokeObjectURL(recordingUrl);
   });
-  loadRecognition().catch(modelError);
+  Promise.all([loadRecognition(), loadObjectRecognition()]).catch(modelError);
 })();
