@@ -21,6 +21,7 @@
   let matcher = null;
   let objectReferences = [];
   let objectMatcherReady = false;
+  let objectLoadPromise = null;
   let isScanning = false;
   let scanningPaused = false;
   let scanTimer = null;
@@ -86,6 +87,10 @@
     setStatus("Recognition model could not load. Check your internet connection, then reload this page.", "error");
   }
 
+  function yieldToBrowser() {
+    return new Promise((resolve) => window.setTimeout(resolve, 0));
+  }
+
   function waitForOpenCv() {
     return new Promise((resolve, reject) => {
       const startedAt = Date.now();
@@ -136,10 +141,23 @@
         source.delete();
         gray.delete();
         keypoints.delete();
+        // ORB feature extraction is CPU-heavy. Yield after every image so the
+        // browser can paint, accept input, and never report the page as hung.
+        await yieldToBrowser();
       }
     }
+    orb.delete();
     objectReferences = references;
     objectMatcherReady = objectReferences.length > 0;
+  }
+
+  function startObjectRecognitionInBackground() {
+    if (!objectManifest.length || objectLoadPromise) return;
+    objectLoadPromise = loadObjectRecognition()
+      .catch((error) => {
+        console.warn("Object recognition setup failed", error);
+        objectMatcherReady = false;
+      });
   }
 
   function detectObject(source) {
@@ -688,6 +706,7 @@
       recordVideoButton.classList.remove("is-recording");
       setRecordingStatus("");
       setStatus("Camera ready. Position one face in good light; scanning starts automatically.");
+      startObjectRecognitionInBackground();
       startAutomaticScanning(CAMERA_SCAN_INTERVAL);
       // Do not make the person wait for the first interval tick. This also
       // provides an immediate visible status change after Camera On is shown.
@@ -705,5 +724,8 @@
     stopCameraStream();
     if (recordingUrl) URL.revokeObjectURL(recordingUrl);
   });
-  Promise.all([loadRecognition(), loadObjectRecognition()]).catch(modelError);
+  // Load the face model first. Object references are intentionally deferred
+  // until the camera starts, so their 21-image OpenCV preparation cannot
+  // freeze the landing page.
+  loadRecognition().catch(modelError);
 })();
